@@ -2,56 +2,78 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"net"
 )
 
-func Listen(port string, communicationType string) (listener net.Listener, err error) {
-	listener, err = net.Listen(communicationType, port)
-	return listener, err
+const (
+	SERVER_ADDRESS = "localhost"
+	SERVER_PORT    = "3999"
+	PROTOCOL       = "tcp"
+)
+
+type KeyPair struct {
+	ServerKey string
+	ClientKey string
+}
+
+func FillKeyPairs(KeyPairs []KeyPair) {
+	KeyPairs = append(KeyPairs, KeyPair{
+		ServerKey: "23019",
+		ClientKey: "32037",
+	})
+
+	KeyPairs = append(KeyPairs, KeyPair{
+		ServerKey: "32037",
+		ClientKey: "29295",
+	})
+
+	KeyPairs = append(KeyPairs, KeyPair{
+		ServerKey: "18789",
+		ClientKey: "13603",
+	})
+
+	KeyPairs = append(KeyPairs, KeyPair{
+		ServerKey: "16443",
+		ClientKey: "29533",
+	})
+
+	KeyPairs = append(KeyPairs, KeyPair{
+		ServerKey: "18189",
+		ClientKey: "21952",
+	})
 }
 
 func main() {
-	// Listen for incoming connections on port 8080
-	listener, err := Listen(":8080", "tcp")
+	//register key pairs
+	availableKeyPairs := make([]KeyPair, 5)
+	FillKeyPairs(availableKeyPairs)
+
+	// Create a listener for incoming connections
+	//prevent IPv6 incorrect host input with JoinHostPort()
+	fmt.Printf("Starting server on %s:%s\n", SERVER_ADDRESS, SERVER_PORT)
+	listener, err := net.Listen(PROTOCOL, net.JoinHostPort(SERVER_ADDRESS, SERVER_PORT))
 	if err != nil {
-		fmt.Println(err)
+		return
 	}
-	defer listener.Close()
+	fmt.Println("Server started...")
 
-	fmt.Println("Server started, waiting for connections...")
+	//close only when the main function ends
+	defer func(listener net.Listener) {
+		err := listener.Close()
+		if err != nil {
 
-	// Loop forever, waiting for connections
+		}
+	}(listener)
+
 	for {
-		// Wait for a connection
+		// Wait for a client to connect
+		fmt.Println("Waiting for a client to connect...")
 		client, err := listener.Accept()
 		if err != nil {
-			fmt.Println("Error accepting connection:", err.Error())
+			fmt.Println(err)
 			continue
 		}
-		go handleConnection(client)
-	}
-}
-
-func handleConnection(conn net.Conn) {
-	fmt.Println("New client connected")
-	// Make a buffer to hold incoming data
-	buf := make([]byte, 1024)
-
-	// Loop forever, reading from the connection
-	for {
-		// Read from the connection
-		n, err := conn.Read(buf)
-		if err != nil && err != io.EOF {
-			fmt.Println("Error reading:", err.Error())
-			return
-		}
-
-		// Print the incoming data
-		fmt.Println("Received:", string(buf[:n]))
-
-		// Send a response back to the client
-		conn.Write([]byte("fucktard\n"))
-		break
+		fmt.Printf("Accepted client from %s\n", client.RemoteAddr())
+		//TODO: go handleClient
 	}
 }
