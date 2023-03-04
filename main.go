@@ -5,48 +5,61 @@ import (
 	"net"
 )
 
-func ConnectClient(host string, port string, communicationType string) (connection net.Conn, err error) {
-	if communicationType != "tcp" {
-		return connection, fmt.Errorf("invalid communication type, valid: tcp")
-	}
-	connection, err = net.Dial(communicationType, fmt.Sprintf("%s:%s", host, port))
-	return connection, err
+const (
+	SAMPLE_USERNAME = "robot1"
+	SERVER_ADDRESS  = "localhost"
+	SERVER_PORT     = "3999"
+
+	PROTOCOL = "tcp"
+)
+
+type KeyPair struct {
+	ServerKey string
+	ClientKey string
 }
 
-func SendMessage(connection *net.Conn, message string) (err error) {
-	_, err = (*connection).Write([]byte(message))
-	if err != nil {
-		return fmt.Errorf("unable to send message, %s", err.Error())
-	}
-	return err
-}
+// YEET EM' IN
+func FillKeyPairs(KeyPairs []KeyPair) {
+	KeyPairs = append(KeyPairs, KeyPair{
+		ServerKey: "23019",
+		ClientKey: "32037",
+	})
 
-func WaitForResponse(connection *net.Conn, buffer []byte) (numOfChars int, err error) {
-	numOfChars, err = (*connection).Read(buffer)
-	return numOfChars, err
+	KeyPairs = append(KeyPairs, KeyPair{
+		ServerKey: "32037",
+		ClientKey: "29295",
+	})
+
+	KeyPairs = append(KeyPairs, KeyPair{
+		ServerKey: "18789",
+		ClientKey: "13603",
+	})
+
+	KeyPairs = append(KeyPairs, KeyPair{
+		ServerKey: "16443",
+		ClientKey: "29533",
+	})
+
+	KeyPairs = append(KeyPairs, KeyPair{
+		ServerKey: "18189",
+		ClientKey: "21952",
+	})
 }
 
 func main() {
-	connection, err := ConnectClient("localhost", "8080", "tcp")
+	//register key pairs
+	availableKeyPairs := make([]KeyPair, 5)
+	FillKeyPairs(availableKeyPairs)
 
+	client, err := net.Dial(PROTOCOL, net.JoinHostPort(SERVER_ADDRESS, SERVER_PORT))
 	if err != nil {
-		println("failed to connect client")
+		fmt.Println("Error connecting:", err)
 		return
 	}
-	defer connection.Close()
+	defer func(connection net.Conn) {
+		err := connection.Close()
+		if err != nil {
 
-	err = SendMessage(&connection, "fucktard")
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-
-	buf := make([]byte, 1024)
-	numOfChars, err := WaitForResponse(&connection, buf)
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-
-	fmt.Println("Received:", string(buf[:numOfChars]))
+		}
+	}(client)
 }
