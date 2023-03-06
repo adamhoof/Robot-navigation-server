@@ -3,12 +3,15 @@ package main
 import (
 	"fmt"
 	"net"
+	"strings"
 )
 
 const (
 	SERVER_ADDRESS = "localhost"
 	SERVER_PORT    = "3999"
 	PROTOCOL       = "tcp"
+
+	SERVER_KEY_REQUEST = "107 KEY REQUEST\a\b"
 )
 
 type KeyPair struct {
@@ -43,6 +46,35 @@ func FillKeyPairs(KeyPairs []KeyPair) {
 	})
 }
 
+func readName(connection *net.Conn) (name string, err error) {
+	buffer := make([]byte, 1024)
+	_, err = (*connection).Read(buffer)
+	name = string(buffer)
+	return name, err
+}
+func checkValidityOfName(name string) (terminatorPosition int, err error) {
+	terminatorPosition = strings.Index(name, "\a\b")
+	if terminatorPosition == -1 {
+		return terminatorPosition, fmt.Errorf("terminator not found")
+	}
+	if terminatorPosition > 20 {
+		return terminatorPosition, fmt.Errorf("invalid length of name")
+	}
+	return terminatorPosition, err
+}
+
+func requestKeyID(connection *net.Conn) error {
+	_, err := fmt.Fprintf(*connection, SERVER_KEY_REQUEST)
+	return err
+}
+
+func readKeyID(connection *net.Conn) (keyID string, err error) {
+	buffer := make([]byte, 10)
+	_, err = (*connection).Read(buffer)
+	keyID = string(buffer)
+	return keyID, err
+}
+
 func main() {
 	//register key pairs
 	availableKeyPairs := make([]KeyPair, 5)
@@ -53,6 +85,7 @@ func main() {
 	fmt.Printf("Starting server on %s:%s\n", SERVER_ADDRESS, SERVER_PORT)
 	listener, err := net.Listen(PROTOCOL, net.JoinHostPort(SERVER_ADDRESS, SERVER_PORT))
 	if err != nil {
+		fmt.Printf("failed to start server: %s\n", err)
 		return
 	}
 	fmt.Println("Server started...")
@@ -61,19 +94,52 @@ func main() {
 	defer func(listener net.Listener) {
 		err := listener.Close()
 		if err != nil {
-
+			fmt.Printf("unable to close listener: %s\n", err)
+			return
 		}
 	}(listener)
 
 	for {
-		// Wait for a client to connect
-		fmt.Println("Waiting for a client to connect...")
-		client, err := listener.Accept()
+		// Wait for a connection to connect
+		fmt.Println("Waiting for a connection to connect...")
+		connection, err := listener.Accept()
 		if err != nil {
-			fmt.Println(err)
+			fmt.Printf("failed to accept socket communication: %s\n", err)
 			continue
 		}
-		fmt.Printf("Accepted client from %s\n", client.RemoteAddr())
-		//TODO: go handleClient
+		fmt.Printf("Accepted connection from %s\n", connection.RemoteAddr())
+
+		name, err := readName(&connection)
+		fmt.Println(name)
+		if err != nil {
+			fmt.Printf("failed to read name: %s", err)
+			err = connection.Close()
+			if err != nil {
+				fmt.Printf("failed to close connection: %s", err)
+			}
+			continue
+		}
+
+		//position return
+		_, err = checkValidityOfName(name)
+		if err != nil {
+			fmt.Printf("\n%s", err)
+			err = connection.Close()
+			if err != nil {
+				fmt.Printf("unable to close connection: %s", err)
+			}
+			continue
+		}
+
+		err = requestKeyID(&connection)
+		if err != nil {
+			fmt.Printf("unable to request key id: %s", err)
+		}
+
+		keyID, err := readKeyID(&connection)
+		if err != nil {
+			fmt.Printf("unable to read key id: %s", err)
+		}
+		fmt.Println(keyID)
 	}
 }
