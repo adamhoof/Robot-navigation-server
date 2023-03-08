@@ -21,6 +21,11 @@ type KeyPair struct {
 	ClientKey string
 }
 
+type Client struct {
+	Name  string
+	KeyID string
+}
+
 func FillKeyPairs(KeyPairs []KeyPair) {
 	KeyPairs = append(KeyPairs, KeyPair{
 		ServerKey: "23019",
@@ -116,9 +121,10 @@ func main() {
 			continue
 		}
 		fmt.Printf("Accepted connection from %s\n", connection.RemoteAddr())
+		client := Client{}
 
-		name, err := readName(&connection)
-		fmt.Println(name)
+		client.Name, err = readName(&connection)
+		fmt.Println(client.Name)
 		if errorOccurred(err, "failed to read name") {
 			err = connection.Close()
 			errorOccurred(err, UNABLE_TO_CLOSE_SOCKET)
@@ -126,7 +132,7 @@ func main() {
 		}
 
 		//position return
-		_, err = checkValidityOfName(name)
+		_, err = checkValidityOfName(client.Name)
 		if errorOccurred(err, "") {
 			err = connection.Close()
 			errorOccurred(err, UNABLE_TO_CLOSE_SOCKET)
@@ -140,12 +146,12 @@ func main() {
 			continue
 		}
 
-		keyID, err := readKeyID(&connection)
+		client.KeyID, err = readKeyID(&connection)
 		if errorOccurred(err, "unable to read key id") {
 			err = connection.Close()
 			errorOccurred(err, UNABLE_TO_CLOSE_SOCKET)
 			continue
 		}
-		fmt.Println(keyID)
+		fmt.Println(client.KeyID)
 	}
 }
