@@ -26,6 +26,19 @@ type Client struct {
 	KeyID string
 }
 
+func errorOccurred(err error, message string) bool {
+	if err == nil {
+		return false
+	}
+	fmt.Printf("%s: %s\n", err, message)
+	return true
+}
+
+func closeSocket(connection *net.Conn) {
+	err := (*connection).Close()
+	errorOccurred(err, UNABLE_TO_CLOSE_SOCKET)
+}
+
 func FillKeyPairs(KeyPairs []KeyPair) {
 	KeyPairs = append(KeyPairs, KeyPair{
 		ServerKey: "23019",
@@ -82,13 +95,6 @@ func readKeyID(connection *net.Conn) (keyID string, err error) {
 	return keyID, err
 }
 
-func errorOccurred(err error, message string) bool {
-	if err == nil {
-		return false
-	}
-	fmt.Printf("%s: %s\n", err, message)
-	return true
-}
 func main() {
 	//register key pairs
 	availableKeyPairs := make([]KeyPair, 5)
@@ -126,30 +132,26 @@ func main() {
 		client.Name, err = readName(&connection)
 		fmt.Println(client.Name)
 		if errorOccurred(err, "failed to read name") {
-			err = connection.Close()
-			errorOccurred(err, UNABLE_TO_CLOSE_SOCKET)
+			closeSocket(&connection)
 			continue
 		}
 
 		//position return
 		_, err = checkValidityOfName(client.Name)
 		if errorOccurred(err, "") {
-			err = connection.Close()
-			errorOccurred(err, UNABLE_TO_CLOSE_SOCKET)
+			closeSocket(&connection)
 			continue
 		}
 
 		err = requestKeyID(&connection)
 		if errorOccurred(err, "unable to request key id") {
-			err = connection.Close()
-			errorOccurred(err, UNABLE_TO_CLOSE_SOCKET)
+			closeSocket(&connection)
 			continue
 		}
 
 		client.KeyID, err = readKeyID(&connection)
 		if errorOccurred(err, "unable to read key id") {
-			err = connection.Close()
-			errorOccurred(err, UNABLE_TO_CLOSE_SOCKET)
+			closeSocket(&connection)
 			continue
 		}
 		fmt.Println(client.KeyID)
