@@ -120,7 +120,7 @@ func main() {
 	}(listener)
 
 	for {
-		// Wait for a connection to connect
+		// Wait for a client to connect
 		fmt.Println("Waiting for a connection to connect...")
 		connection, err := listener.Accept()
 		if errorOccurred(err, "failed to accept socket communication") {
@@ -129,6 +129,7 @@ func main() {
 		fmt.Printf("Accepted connection from %s\n", connection.RemoteAddr())
 		client := Client{}
 
+		//wait for client to send name
 		client.Name, err = readName(&connection)
 		fmt.Println(client.Name)
 		if errorOccurred(err, "failed to read name") {
@@ -149,6 +150,7 @@ func main() {
 			continue
 		}
 
+		//wait for client to send key id number
 		client.KeyID, err = readKeyID(&connection)
 		if errorOccurred(err, "unable to read key id") {
 			closeSocket(&connection)
