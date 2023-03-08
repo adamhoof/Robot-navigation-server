@@ -12,6 +12,8 @@ const (
 	PROTOCOL       = "tcp"
 
 	SERVER_KEY_REQUEST = "107 KEY REQUEST\a\b"
+
+	UNABLE_TO_CLOSE_SOCKET = "unable to close connection\n"
 )
 
 type KeyPair struct {
@@ -75,6 +77,13 @@ func readKeyID(connection *net.Conn) (keyID string, err error) {
 	return keyID, err
 }
 
+func errorOccurred(err error, message string) bool {
+	if err == nil {
+		return false
+	}
+	fmt.Printf("%s: %s\n", err, message)
+	return true
+}
 func main() {
 	//register key pairs
 	availableKeyPairs := make([]KeyPair, 5)
@@ -103,42 +112,39 @@ func main() {
 		// Wait for a connection to connect
 		fmt.Println("Waiting for a connection to connect...")
 		connection, err := listener.Accept()
-		if err != nil {
-			fmt.Printf("failed to accept socket communication: %s\n", err)
+		if errorOccurred(err, "failed to accept socket communication") {
 			continue
 		}
 		fmt.Printf("Accepted connection from %s\n", connection.RemoteAddr())
 
 		name, err := readName(&connection)
 		fmt.Println(name)
-		if err != nil {
-			fmt.Printf("failed to read name: %s", err)
+		if errorOccurred(err, "failed to read name") {
 			err = connection.Close()
-			if err != nil {
-				fmt.Printf("failed to close connection: %s", err)
-			}
+			errorOccurred(err, UNABLE_TO_CLOSE_SOCKET)
 			continue
 		}
 
 		//position return
 		_, err = checkValidityOfName(name)
-		if err != nil {
-			fmt.Printf("\n%s", err)
+		if errorOccurred(err, "") {
 			err = connection.Close()
-			if err != nil {
-				fmt.Printf("unable to close connection: %s", err)
-			}
+			errorOccurred(err, UNABLE_TO_CLOSE_SOCKET)
 			continue
 		}
 
 		err = requestKeyID(&connection)
-		if err != nil {
-			fmt.Printf("unable to request key id: %s", err)
+		if errorOccurred(err, "unable to request key id") {
+			err = connection.Close()
+			errorOccurred(err, UNABLE_TO_CLOSE_SOCKET)
+			continue
 		}
 
 		keyID, err := readKeyID(&connection)
-		if err != nil {
-			fmt.Printf("unable to read key id: %s", err)
+		if errorOccurred(err, "unable to read key id") {
+			err = connection.Close()
+			errorOccurred(err, UNABLE_TO_CLOSE_SOCKET)
+			continue
 		}
 		fmt.Println(keyID)
 	}
