@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 )
 
@@ -17,13 +18,16 @@ const (
 )
 
 type KeyPair struct {
-	ServerKey string
-	ClientKey string
+	ServerKey int
+	ClientKey int
 }
 
 type Client struct {
-	Name  string
-	KeyID string
+	connection         *net.Conn
+	Name               string
+	KeyID              int
+	NameTerminatorPos  int
+	KeyIDTerminatorPos int
 }
 
 func errorOccurred(err error, message string) bool {
@@ -34,41 +38,42 @@ func errorOccurred(err error, message string) bool {
 	return true
 }
 
-func closeSocket(connection *net.Conn) {
-	err := (*connection).Close()
+func closeSocket(client *Client) {
+	err := (*client.connection).Close()
 	errorOccurred(err, UNABLE_TO_CLOSE_SOCKET)
 }
 
-func FillKeyPairs(KeyPairs []KeyPair) {
-	KeyPairs = append(KeyPairs, KeyPair{
-		ServerKey: "23019",
-		ClientKey: "32037",
+func FillKeyPairs() (keyPairs []KeyPair) {
+	keyPairs = append(keyPairs, KeyPair{
+		ServerKey: 23019,
+		ClientKey: 32037,
 	})
 
-	KeyPairs = append(KeyPairs, KeyPair{
-		ServerKey: "32037",
-		ClientKey: "29295",
+	keyPairs = append(keyPairs, KeyPair{
+		ServerKey: 32037,
+		ClientKey: 29295,
 	})
 
-	KeyPairs = append(KeyPairs, KeyPair{
-		ServerKey: "18789",
-		ClientKey: "13603",
+	keyPairs = append(keyPairs, KeyPair{
+		ServerKey: 18789,
+		ClientKey: 13603,
 	})
 
-	KeyPairs = append(KeyPairs, KeyPair{
-		ServerKey: "16443",
-		ClientKey: "29533",
+	keyPairs = append(keyPairs, KeyPair{
+		ServerKey: 16443,
+		ClientKey: 29533,
 	})
 
-	KeyPairs = append(KeyPairs, KeyPair{
-		ServerKey: "18189",
-		ClientKey: "21952",
+	keyPairs = append(keyPairs, KeyPair{
+		ServerKey: 18189,
+		ClientKey: 21952,
 	})
+	return keyPairs
 }
 
-func readName(connection *net.Conn) (name string, err error) {
-	buffer := make([]byte, 1024)
-	_, err = (*connection).Read(buffer)
+func readName(client *Client) (name string, err error) {
+	buffer := make([]byte, 24)
+	_, err = (*client.connection).Read(buffer)
 	name = string(buffer)
 	return name, err
 }
@@ -83,22 +88,36 @@ func checkValidityOfName(name string) (terminatorPosition int, err error) {
 	return terminatorPosition, err
 }
 
-func requestKeyID(connection *net.Conn) error {
-	_, err := fmt.Fprintf(*connection, SERVER_KEY_REQUEST)
+func requestKeyID(client *Client) error {
+	_, err := fmt.Fprintf(*client.connection, SERVER_KEY_REQUEST)
 	return err
 }
 
-func readKeyID(connection *net.Conn) (keyID string, err error) {
+func readKeyID(client *Client) (keyID int, err error) {
 	buffer := make([]byte, 10)
-	_, err = (*connection).Read(buffer)
-	keyID = string(buffer)
-	return keyID, err
+	_, err = (*client.connection).Read(buffer)
+	stringKeyID := string(buffer)
+	client.KeyIDTerminatorPos = strings.Index(stringKeyID, "\a\b")
+
+	//returns int and possibly error
+	return strconv.Atoi(stringKeyID[:client.KeyIDTerminatorPos])
+}
+
+func countHash(client *Client, keyPairs []KeyPair) int {
+	var hash int
+	for i := 0; i < client.NameTerminatorPos; i++ {
+		hash += int(client.Name[i])
+	}
+	hash *= 1000
+	hash %= 65536
+	hash += keyPairs[(client.KeyID)-1].ServerKey
+	hash %= 65536
+	return hash
 }
 
 func main() {
 	//register key pairs
-	availableKeyPairs := make([]KeyPair, 5)
-	FillKeyPairs(availableKeyPairs)
+	availableKeyPairs := FillKeyPairs()
 
 	// Create a listener for incoming connections
 	//prevent IPv6 incorrect host input with JoinHostPort()
@@ -127,35 +146,38 @@ func main() {
 			continue
 		}
 		fmt.Printf("Accepted connection from %s\n", connection.RemoteAddr())
-		client := Client{}
+		client := Client{connection: &connection}
 
 		//wait for client to send name
-		client.Name, err = readName(&connection)
+		client.Name, err = readName(&client)
 		fmt.Println(client.Name)
 		if errorOccurred(err, "failed to read name") {
-			closeSocket(&connection)
+			closeSocket(&client)
 			continue
 		}
 
 		//position return
-		_, err = checkValidityOfName(client.Name)
+		client.NameTerminatorPos, err = checkValidityOfName(client.Name)
 		if errorOccurred(err, "") {
-			closeSocket(&connection)
+			closeSocket(&client)
 			continue
 		}
 
-		err = requestKeyID(&connection)
+		err = requestKeyID(&client)
 		if errorOccurred(err, "unable to request key id") {
-			closeSocket(&connection)
+			closeSocket(&client)
 			continue
 		}
 
 		//wait for client to send key id number
-		client.KeyID, err = readKeyID(&connection)
+		client.KeyID, err = readKeyID(&client)
 		if errorOccurred(err, "unable to read key id") {
-			closeSocket(&connection)
+			closeSocket(&client)
 			continue
 		}
-		fmt.Println(client.KeyID)
+		fmt.Printf("client id: %d\n", client.KeyID)
+
+		hash := countHash(&client, availableKeyPairs)
+		fmt.Printf("hash: %d\n", hash)
 	}
 }
