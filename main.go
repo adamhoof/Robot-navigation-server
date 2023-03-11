@@ -135,62 +135,124 @@ func countHash(client *Client, keyPairs []KeyPair) int {
 	return hash
 }
 
-func main() {
-	//register key pairs
-	/*availableKeyPairs := FillKeyPairs()*/
+func receivedMoreMessages(arrayOfMessages []string) bool {
+	return len(arrayOfMessages) > 1
+}
 
-	// Create a listener for incoming connections
-	//prevent IPv6 incorrect host input with JoinHostPort()
+func createListener() (net.Listener, error) {
 	fmt.Printf("Starting server on %s:%s\n", SERVER_ADDRESS, SERVER_PORT)
 	listener, err := net.Listen(PROTOCOL, net.JoinHostPort(SERVER_ADDRESS, SERVER_PORT))
 	if err != nil {
-		fmt.Printf("failed to start server: %s\n", err)
-		return
+		return listener, err
 	}
 	fmt.Println("Server started...")
+	return listener, err
+}
+func waitForClientConnection(listener *net.Listener) (net.Conn, error) {
+	log.Println("Waiting for a client to connect...")
+	conn, err := (*listener).Accept()
+	if err != nil {
+		return conn, err
+	}
+	fmt.Printf("Accepted conn from %s\n", conn.RemoteAddr())
+	return conn, err
+}
+
+func splitIntoMessages(message []byte) []string {
+	cleanedUpMessage := strings.TrimRight(string(message), "\x00")
+	splitMessagesArray := strings.Split(cleanedUpMessage, "\a\b")
+
+	lastIndex := len(splitMessagesArray) - 1
+	if splitMessagesArray[lastIndex] == "" {
+		splitMessagesArray = splitMessagesArray[:lastIndex]
+	}
+	return splitMessagesArray
+}
+
+func handleClient(conn *net.Conn) {
+	phase := "auth"
+	err := (*conn).SetDeadline(time.Now().Add(5 * time.Second))
+	if err != nil {
+		return
+	}
+
+	buffer := make([]byte, 10000)
+
+	_, err = (*conn).Read(buffer)
+	if err != nil {
+		fmt.Println("failed to read data from client")
+		return
+	}
+
+	messages := splitIntoMessages(buffer)
+
+	//state machine
+	if receivedMoreMessages(messages) {
+		switch phase {
+		case "auth":
+		case "nav":
+		case "recharging":
+
+		}
+		//continue continue doing more phases at once
+	} else {
+		//do one phase, then the other
+	}
+	for _, m := range messages {
+		fmt.Println(m)
+	}
+}
+
+func main() {
+	//register key pairs
+	availableKeyPairs := FillKeyPairs()
+	fmt.Println(len(availableKeyPairs))
+
+	listener, err := createListener()
+	if err != nil {
+		fmt.Printf("failed to create listener: %s\n", err.Error())
+		return
+	}
 
 	//close only when the main function ends
 	defer func(listener net.Listener) {
 		err := listener.Close()
 		if err != nil {
-			fmt.Printf("unable to close listener: %s\n", err)
 			return
 		}
 	}(listener)
 
 	for {
-		//TODO WRAPPER
 
-		// Wait for a client to connect
-		log.Println("Waiting for a client to connect...")
-		conn, err := listener.Accept()
-		if errorOccurred(err, "failed to accept socket communication") {
+		conn, err := waitForClientConnection(&listener)
+		if err != nil {
+			fmt.Printf("failed to accept client: %s\n", err.Error())
 			continue
 		}
-		fmt.Printf("Accepted conn from %s\n", conn.RemoteAddr())
+		go handleClient(&conn)
+
+		//go handleClient(&conn)
 		/*client := Client{connection: &conn}*/
-
-		err = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		/*err = conn.SetDeadline(time.Now().Add(5 * time.Second))
 		if err != nil {
 			return
 		}
 
-		messageContent := make([]byte, 10000)
-		_, err = conn.Read(messageContent)
+		buffer := make([]byte, 10000)
+
+		_, err = conn.Read(buffer)
 		if err != nil {
+			fmt.Println("failed to read data from client")
 			return
 		}
 
-		cleanedUpMessage := strings.TrimRight(string(messageContent), "\x00")
-		splitMessagesArray := strings.Split(cleanedUpMessage, "\a\b")
+		messages := splitIntoMessages(buffer)
 
-		lastIndex := len(splitMessagesArray) - 1
-		if splitMessagesArray[lastIndex] == "" {
-			splitMessagesArray = splitMessagesArray[:lastIndex]
-		}
-		for _, message := range splitMessagesArray {
-			fmt.Printf("Received message: %s\n", message)
-		}
+		if receivedMoreMessages(messages) {
+			//continue continue doing more phases at once
+		} else {
+			//do one phase, then the other
+		}*/
 		//wait for client to send name
 		/*client.Name, err = readName(scanner)
 		fmt.Println(client.Name)
