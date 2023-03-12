@@ -6,6 +6,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -146,8 +147,9 @@ func handleClient(client *Client) {
 		data := make([]byte, 1024)
 		n, err := (*client.conn).Read(data)
 		if err != nil {
-			sendMessage(client, SERVER_KEY_REQUEST)
+			//possible more exit point/non-standard situations?
 			log.Println("Error reading data:", err)
+			cutOff(client)
 			break
 		}
 
@@ -233,12 +235,12 @@ func main() {
 	}(listener)
 
 	for {
-
 		conn, err := waitForClientConnection(&listener)
 		if err != nil {
 			fmt.Printf("failed to accept client: %s\n", err.Error())
 			continue
 		}
+		conn.SetDeadline(time.Now().Add(1 * time.Second))
 		client := Client{conn: &conn}
 		go handleClient(&client)
 	}
