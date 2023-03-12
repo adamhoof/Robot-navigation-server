@@ -42,27 +42,61 @@ type KeyPair struct {
 }
 
 type Client struct {
-	conn               *net.Conn
-	Name               string
-	KeyID              int
-	NameTerminatorPos  int
-	KeyIDTerminatorPos int
+	conn  *net.Conn
+	Name  string
+	KeyID int
+	Hash  int
 }
 
-func (client *Client) getName() string {
-	return client.Name
+func createListener() (net.Listener, error) {
+	fmt.Printf("Starting server on %s:%s\n", SERVER_ADDRESS, SERVER_PORT)
+	listener, err := net.Listen(PROTOCOL, net.JoinHostPort(SERVER_ADDRESS, SERVER_PORT))
+	if err != nil {
+		return listener, err
+	}
+	fmt.Println("Server started...")
+	return listener, err
+}
+
+func waitForClientConnection(listener *net.Listener) (net.Conn, error) {
+	log.Println("Waiting for a client to connect...")
+	conn, err := (*listener).Accept()
+	if err != nil {
+		return conn, err
+	}
+	fmt.Printf("Accepted conn from %s\n", conn.RemoteAddr())
+	return conn, err
+}
+
+func cutOff(client *Client) error {
+	return (*client.conn).Close()
+}
+
+func sendMessage(client *Client, message string) error {
+	_, err := fmt.Fprintf(*client.conn, message)
+	return err
 }
 
 func (client *Client) setName(name string) {
 	client.Name = name
 }
-
-func (client *Client) getKeyIndex() int {
-	return client.KeyID
+func (client *Client) getName() string {
+	return client.Name
 }
 
 func (client *Client) setKeyIndex(keyID int) {
 	client.KeyID = keyID
+}
+func (client *Client) getKeyIndex() int {
+	return client.KeyID
+}
+
+func (client *Client) setHash(hash int) {
+	client.Hash = hash
+}
+
+func (client *Client) getHash() int {
+	return client.Hash
 }
 func getKeyPair(index int) KeyPair {
 	switch index {
@@ -81,50 +115,31 @@ func getKeyPair(index int) KeyPair {
 	}
 }
 
-func sendMessage(client *Client, message string) error {
-	_, err := fmt.Fprintf(*client.conn, message)
-	return err
-}
-
-func cutOff(client *Client) error {
-	return (*client.conn).Close()
-}
-
-func countHash(client *Client, keyPair KeyPair) int {
+func countHashFromName(name string) int {
 	var hash int
-	for _, letter := range client.getName() {
+	for _, letter := range name {
 		hash += int(letter)
 	}
 	hash *= 1000
 	hash %= 65536
-	hash += keyPair.ServerKey
-	hash %= 65536
 	return hash
 }
 
-func createListener() (net.Listener, error) {
-	fmt.Printf("Starting server on %s:%s\n", SERVER_ADDRESS, SERVER_PORT)
-	listener, err := net.Listen(PROTOCOL, net.JoinHostPort(SERVER_ADDRESS, SERVER_PORT))
-	if err != nil {
-		return listener, err
-	}
-	fmt.Println("Server started...")
-	return listener, err
+func createConfirmationCode(clientHash int, key int) (confirmationCode int) {
+	confirmationCode = clientHash
+	confirmationCode += key
+	confirmationCode %= 65536
+
+	return confirmationCode
 }
-func waitForClientConnection(listener *net.Listener) (net.Conn, error) {
-	log.Println("Waiting for a client to connect...")
-	conn, err := (*listener).Accept()
-	if err != nil {
-		return conn, err
-	}
-	fmt.Printf("Accepted conn from %s\n", conn.RemoteAddr())
-	return conn, err
+
+func codesMatch(code1 int, code2 int) bool {
+	return code1 == code2
 }
 
 func handleClient(client *Client) {
 
 	phase := "username"
-
 	buffer := ""
 	for {
 		// Read data from client
@@ -154,7 +169,6 @@ func handleClient(client *Client) {
 			fmt.Printf("Received message: %s\n", message)
 
 			switch phase {
-
 			case "username":
 				if len(message) > MAX_NAME_LEN {
 					sendMessage(client, SERVER_SYNTAX_ERROR)
@@ -180,13 +194,22 @@ func handleClient(client *Client) {
 					break
 				}
 
-				hash := countHash(client, getKeyPair(client.getKeyIndex()))
-				stringHash := strconv.Itoa(hash) + "\a\b"
+				client.setHash(countHashFromName(client.getName()))
+				serverConfirmationCode := createConfirmationCode(client.getHash(), getKeyPair(client.getKeyIndex()).ServerKey)
 
+				stringHash := strconv.Itoa(serverConfirmationCode) + "\a\b"
 				sendMessage(client, stringHash)
-				phase = "confirmation"
 
+				phase = "confirmation"
 			case "confirmation":
+				clientConfirmationCode, _ := strconv.Atoi(message)
+				validationCode := createConfirmationCode(client.getHash(), getKeyPair(client.getKeyIndex()).ClientKey)
+
+				if !codesMatch(validationCode, clientConfirmationCode) {
+					sendMessage(client, SERVER_LOGIN_FAILED)
+					cutOff(client)
+					break
+				}
 				sendMessage(client, SERVER_OK)
 			}
 		}
