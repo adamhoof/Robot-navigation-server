@@ -47,6 +47,12 @@ type Client struct {
 	Name  string
 	KeyID int
 	Hash  int
+	pos   Position
+}
+
+type Position struct {
+	x int
+	y int
 }
 
 func createListener() (net.Listener, error) {
@@ -141,6 +147,7 @@ func codesMatch(code1 int, code2 int) bool {
 func handleClient(client *Client) {
 
 	phase := "username"
+	movePhase := "straight2"
 	buffer := ""
 	for {
 		// Read data from client
@@ -160,6 +167,20 @@ func handleClient(client *Client) {
 		for {
 			index := strings.Index(buffer, TERMINATOR)
 			if index == -1 {
+				switch phase {
+				case "username":
+					if len(buffer) > MAX_NAME_LEN {
+						sendMessage(client, SERVER_SYNTAX_ERROR)
+						cutOff(client)
+						return
+					}
+				case "confirmation":
+					codeAsNumber, _ := strconv.Atoi(buffer)
+					if len(buffer) > 5 || codeAsNumber > 65536 {
+						sendMessage(client, SERVER_SYNTAX_ERROR)
+						cutOff(client)
+					}
+				}
 				break // Incomplete message in buffer, wait for more data
 			}
 
@@ -171,6 +192,20 @@ func handleClient(client *Client) {
 			fmt.Printf("Received message: %s\n", message)
 
 			switch phase {
+			case "move":
+				client.pos.x = 0
+				client.pos.y = 0
+				switch movePhase {
+				case "straight":
+					sendMessage(client, SERVER_MOVE)
+				case "right":
+					sendMessage(client, SERVER_TURN_RIGHT)
+				case "left":
+					sendMessage(client, SERVER_TURN_LEFT)
+				case "straight2":
+					sendMessage(client, SERVER_MOVE)
+				}
+
 			case "username":
 				if len(message) > MAX_NAME_LEN {
 					sendMessage(client, SERVER_SYNTAX_ERROR)
@@ -213,6 +248,7 @@ func handleClient(client *Client) {
 					break
 				}
 				sendMessage(client, SERVER_OK)
+				phase = "move"
 			}
 		}
 	}
