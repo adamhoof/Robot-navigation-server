@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -19,7 +18,7 @@ const (
 	MAX_NAME_LEN           = 18
 	MIN_KEY_INDEX          = 0
 	MAX_KEY_INDEX          = 4
-	UNABLE_TO_CLOSE_SOCKET = "unable to close conn\n"
+	UNABLE_TO_CLOSE_SOCKET = "unable to cutOff conn\n"
 
 	SERVER_KEY_REQUEST = "107 KEY REQUEST\a\b"
 
@@ -58,31 +57,13 @@ func (client *Client) setName(name string) {
 	client.Name = name
 }
 
-func (client *Client) getKeyID() int {
+func (client *Client) getKeyIndex() int {
 	return client.KeyID
 }
 
-func (client *Client) setKeyID(keyID int) {
+func (client *Client) setKeyIndex(keyID int) {
 	client.KeyID = keyID
 }
-
-func (client *Client) close() error {
-	return (*client.conn).Close()
-}
-
-func errorOccurred(err error, message string) bool {
-	if err == nil {
-		return false
-	}
-	fmt.Printf("%s: %s\n", err, message)
-	return true
-}
-
-func closeSocket(client *Client) {
-	err := (*client.conn).Close()
-	errorOccurred(err, UNABLE_TO_CLOSE_SOCKET)
-}
-
 func getKeyPair(index int) KeyPair {
 	switch index {
 	case 0:
@@ -100,41 +81,13 @@ func getKeyPair(index int) KeyPair {
 	}
 }
 
-func writeToClient(client *Client, message string) error {
+func sendMessage(client *Client, message string) error {
 	_, err := fmt.Fprintf(*client.conn, message)
 	return err
 }
 
-func readName(client *Client) (name string, err error) {
-	buffer := make([]byte, 20)
-	_, err = (*client.conn).Read(buffer)
-	if err != nil {
-		return name, errors.New(SERVER_SYNTAX_ERROR)
-	}
-	name = string(buffer)
-	return name, err
-}
-func checkValidityOfName(name string) (terminatorPosition int, err error) {
-	terminatorPosition = strings.Index(name, "\a\b")
-	if terminatorPosition == -1 || terminatorPosition > 20 {
-		return terminatorPosition, errors.New(SERVER_SYNTAX_ERROR)
-	}
-	return terminatorPosition, err
-}
-
-func requestKeyID(client *Client) error {
-	return writeToClient(client, SERVER_KEY_REQUEST)
-}
-
-func readKeyID(client *Client) (keyID int, err error) {
-	buffer := make([]byte, 10)
-	_, err = (*client.conn).Read(buffer)
-	stringKeyID := string(buffer)
-	client.KeyIDTerminatorPos = strings.Index(stringKeyID, "\a\b")
-
-	keyID, err = strconv.Atoi(stringKeyID[:client.KeyIDTerminatorPos])
-	//returns int and possibly error
-	return
+func cutOff(client *Client) error {
+	return (*client.conn).Close()
 }
 
 func countHash(client *Client, keyPair KeyPair) int {
@@ -147,15 +100,6 @@ func countHash(client *Client, keyPair KeyPair) int {
 	hash += keyPair.ServerKey
 	hash %= 65536
 	return hash
-}
-
-func receivedMoreMessages(arrayOfMessages []string) bool {
-	return len(arrayOfMessages) > 1
-}
-
-func waitForClientMessage(client *Client) (buffer []byte, err error) {
-	_, err = (*client.conn).Read(buffer)
-	return buffer, err
 }
 
 func createListener() (net.Listener, error) {
@@ -177,34 +121,17 @@ func waitForClientConnection(listener *net.Listener) (net.Conn, error) {
 	return conn, err
 }
 
-func splitIntoMessages(message []byte) []string {
-	cleanedUpMessage := strings.TrimRight(string(message), "\x00")
-	splitMessagesArray := strings.Split(cleanedUpMessage, "\a\b")
-
-	lastIndex := len(splitMessagesArray) - 1
-	if splitMessagesArray[lastIndex] == "" {
-		splitMessagesArray = splitMessagesArray[:lastIndex]
-	}
-	return splitMessagesArray
-}
-
 func handleClient(client *Client) {
 
 	phase := "username"
-	/*currentState := 0
-	stateMap := make(map[int]string)
-	stateMap[currentState] = "username"
-	stateMap[currentState] = "key"
-	stateMap[currentState] = "confirmation"*/
 
-	fmt.Println("receiving communication")
 	buffer := ""
 	for {
 		// Read data from client
 		data := make([]byte, 1024)
 		n, err := (*client.conn).Read(data)
 		if err != nil {
-			writeToClient(client, SERVER_KEY_REQUEST)
+			sendMessage(client, SERVER_KEY_REQUEST)
 			log.Println("Error reading data:", err)
 			break
 		}
@@ -226,52 +153,44 @@ func handleClient(client *Client) {
 			// Process complete message
 			fmt.Printf("Received message: %s\n", message)
 
-			/*phase := stateMap[currentState]*/
 			switch phase {
 
 			case "username":
 				if len(message) > MAX_NAME_LEN {
-					writeToClient(client, SERVER_SYNTAX_ERROR)
-					client.close()
+					sendMessage(client, SERVER_SYNTAX_ERROR)
+					cutOff(client)
 					break
 				}
 				client.setName(message)
-				writeToClient(client, SERVER_KEY_REQUEST)
-				/*currentState++*/
+				sendMessage(client, SERVER_KEY_REQUEST)
 				phase = "key"
 
 			case "key":
 				keyID, err := strconv.Atoi(message)
 				if err != nil {
-					writeToClient(client, SERVER_SYNTAX_ERROR)
-					client.close()
+					sendMessage(client, SERVER_SYNTAX_ERROR)
+					cutOff(client)
 					break
 				}
 
-				client.setKeyID(keyID)
+				client.setKeyIndex(keyID)
 				if keyID < MIN_KEY_INDEX || keyID > MAX_KEY_INDEX {
-					writeToClient(client, SERVER_KEY_OUT_OF_RANGE_ERROR)
-					client.close()
+					sendMessage(client, SERVER_KEY_OUT_OF_RANGE_ERROR)
+					cutOff(client)
 					break
 				}
 
-				hash := countHash(client, getKeyPair(client.getKeyID()))
+				hash := countHash(client, getKeyPair(client.getKeyIndex()))
 				stringHash := strconv.Itoa(hash) + "\a\b"
-				writeToClient(client, stringHash)
+
+				sendMessage(client, stringHash)
 				phase = "confirmation"
-				/*currentState++*/
+
 			case "confirmation":
-				writeToClient(client, SERVER_OK)
+				sendMessage(client, SERVER_OK)
 			}
 		}
 	}
-	cock := []byte{1, 2, 3}
-	_, err := (*client.conn).Write(cock)
-	if err != nil {
-		return
-	}
-	fmt.Printf("cock")
-
 }
 
 func main() {
@@ -282,7 +201,7 @@ func main() {
 		return
 	}
 
-	// close only when the main function ends
+	// cutOff only when the main function ends
 	defer func(listener net.Listener) {
 		err := listener.Close()
 		if err != nil {
