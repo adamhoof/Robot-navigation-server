@@ -7,14 +7,19 @@ import (
 	"net"
 	"strconv"
 	"strings"
-	"time"
 )
 
 const (
-	SERVER_ADDRESS         = "localhost"
-	SERVER_PORT            = "3999"
-	PROTOCOL               = "tcp"
-	UNABLE_TO_CLOSE_SOCKET = "unable to close connection\n"
+	SERVER_ADDRESS = "localhost"
+	SERVER_PORT    = "3999"
+	PROTOCOL       = "tcp"
+
+	TERMINATOR = "\a\b"
+
+	MAX_NAME_LEN           = 18
+	MIN_KEY_INDEX          = 0
+	MAX_KEY_INDEX          = 4
+	UNABLE_TO_CLOSE_SOCKET = "unable to close conn\n"
 
 	SERVER_KEY_REQUEST = "107 KEY REQUEST\a\b"
 
@@ -38,11 +43,31 @@ type KeyPair struct {
 }
 
 type Client struct {
-	connection         *net.Conn
+	conn               *net.Conn
 	Name               string
 	KeyID              int
 	NameTerminatorPos  int
 	KeyIDTerminatorPos int
+}
+
+func (client *Client) getName() string {
+	return client.Name
+}
+
+func (client *Client) setName(name string) {
+	client.Name = name
+}
+
+func (client *Client) getKeyID() int {
+	return client.KeyID
+}
+
+func (client *Client) setKeyID(keyID int) {
+	client.KeyID = keyID
+}
+
+func (client *Client) close() error {
+	return (*client.conn).Close()
 }
 
 func errorOccurred(err error, message string) bool {
@@ -54,46 +79,35 @@ func errorOccurred(err error, message string) bool {
 }
 
 func closeSocket(client *Client) {
-	err := (*client.connection).Close()
+	err := (*client.conn).Close()
 	errorOccurred(err, UNABLE_TO_CLOSE_SOCKET)
 }
 
-func FillKeyPairs() (keyPairs []KeyPair) {
-	keyPairs = append(keyPairs, KeyPair{
-		ServerKey: 23019,
-		ClientKey: 32037,
-	})
-
-	keyPairs = append(keyPairs, KeyPair{
-		ServerKey: 32037,
-		ClientKey: 29295,
-	})
-
-	keyPairs = append(keyPairs, KeyPair{
-		ServerKey: 18789,
-		ClientKey: 13603,
-	})
-
-	keyPairs = append(keyPairs, KeyPair{
-		ServerKey: 16443,
-		ClientKey: 29533,
-	})
-
-	keyPairs = append(keyPairs, KeyPair{
-		ServerKey: 18189,
-		ClientKey: 21952,
-	})
-	return keyPairs
+func getKeyPair(index int) KeyPair {
+	switch index {
+	case 0:
+		return KeyPair{23019, 32037}
+	case 1:
+		return KeyPair{32037, 29295}
+	case 2:
+		return KeyPair{18789, 13603}
+	case 3:
+		return KeyPair{16443, 29533}
+	case 4:
+		return KeyPair{18189, 21952}
+	default:
+		return KeyPair{-1, -1}
+	}
 }
 
 func writeToClient(client *Client, message string) error {
-	_, err := fmt.Fprintf(*client.connection, message)
+	_, err := fmt.Fprintf(*client.conn, message)
 	return err
 }
 
 func readName(client *Client) (name string, err error) {
 	buffer := make([]byte, 20)
-	_, err = (*client.connection).Read(buffer)
+	_, err = (*client.conn).Read(buffer)
 	if err != nil {
 		return name, errors.New(SERVER_SYNTAX_ERROR)
 	}
@@ -114,7 +128,7 @@ func requestKeyID(client *Client) error {
 
 func readKeyID(client *Client) (keyID int, err error) {
 	buffer := make([]byte, 10)
-	_, err = (*client.connection).Read(buffer)
+	_, err = (*client.conn).Read(buffer)
 	stringKeyID := string(buffer)
 	client.KeyIDTerminatorPos = strings.Index(stringKeyID, "\a\b")
 
@@ -123,20 +137,25 @@ func readKeyID(client *Client) (keyID int, err error) {
 	return
 }
 
-func countHash(client *Client, keyPairs []KeyPair) int {
+func countHash(client *Client, keyPair KeyPair) int {
 	var hash int
-	for i := 0; i < client.NameTerminatorPos; i++ {
-		hash += int(client.Name[i])
+	for _, letter := range client.getName() {
+		hash += int(letter)
 	}
 	hash *= 1000
 	hash %= 65536
-	hash += keyPairs[(client.KeyID)].ServerKey
+	hash += keyPair.ServerKey
 	hash %= 65536
 	return hash
 }
 
 func receivedMoreMessages(arrayOfMessages []string) bool {
 	return len(arrayOfMessages) > 1
+}
+
+func waitForClientMessage(client *Client) (buffer []byte, err error) {
+	_, err = (*client.conn).Read(buffer)
+	return buffer, err
 }
 
 func createListener() (net.Listener, error) {
@@ -169,44 +188,93 @@ func splitIntoMessages(message []byte) []string {
 	return splitMessagesArray
 }
 
-func handleClient(conn *net.Conn) {
-	phase := "auth"
-	err := (*conn).SetDeadline(time.Now().Add(5 * time.Second))
-	if err != nil {
-		return
-	}
+func handleClient(client *Client) {
 
-	buffer := make([]byte, 10000)
+	phase := "username"
+	/*currentState := 0
+	stateMap := make(map[int]string)
+	stateMap[currentState] = "username"
+	stateMap[currentState] = "key"
+	stateMap[currentState] = "confirmation"*/
 
-	_, err = (*conn).Read(buffer)
-	if err != nil {
-		fmt.Println("failed to read data from client")
-		return
-	}
-
-	messages := splitIntoMessages(buffer)
-
-	//state machine
-	if receivedMoreMessages(messages) {
-		switch phase {
-		case "auth":
-		case "nav":
-		case "recharging":
-
+	fmt.Println("receiving communication")
+	buffer := ""
+	for {
+		// Read data from client
+		data := make([]byte, 1024)
+		n, err := (*client.conn).Read(data)
+		if err != nil {
+			writeToClient(client, SERVER_KEY_REQUEST)
+			log.Println("Error reading data:", err)
+			break
 		}
-		//continue continue doing more phases at once
-	} else {
-		//do one phase, then the other
+
+		// Append data to buffer
+		buffer += string(data[:n])
+
+		// Check if buffer contains a complete message
+		for {
+			index := strings.Index(buffer, TERMINATOR)
+			if index == -1 {
+				break // Incomplete message in buffer, wait for more data
+			}
+
+			// Extract complete message from buffer
+			message := buffer[:index]
+			buffer = buffer[index+2:]
+
+			// Process complete message
+			fmt.Printf("Received message: %s\n", message)
+
+			/*phase := stateMap[currentState]*/
+			switch phase {
+
+			case "username":
+				if len(message) > MAX_NAME_LEN {
+					writeToClient(client, SERVER_SYNTAX_ERROR)
+					client.close()
+					break
+				}
+				client.setName(message)
+				writeToClient(client, SERVER_KEY_REQUEST)
+				/*currentState++*/
+				phase = "key"
+
+			case "key":
+				keyID, err := strconv.Atoi(message)
+				if err != nil {
+					writeToClient(client, SERVER_SYNTAX_ERROR)
+					client.close()
+					break
+				}
+
+				client.setKeyID(keyID)
+				if keyID < MIN_KEY_INDEX || keyID > MAX_KEY_INDEX {
+					writeToClient(client, SERVER_KEY_OUT_OF_RANGE_ERROR)
+					client.close()
+					break
+				}
+
+				hash := countHash(client, getKeyPair(client.getKeyID()))
+				stringHash := strconv.Itoa(hash) + "\a\b"
+				writeToClient(client, stringHash)
+				phase = "confirmation"
+				/*currentState++*/
+			case "confirmation":
+				writeToClient(client, SERVER_OK)
+			}
+		}
 	}
-	for _, m := range messages {
-		fmt.Println(m)
+	cock := []byte{1, 2, 3}
+	_, err := (*client.conn).Write(cock)
+	if err != nil {
+		return
 	}
+	fmt.Printf("cock")
+
 }
 
 func main() {
-	//register key pairs
-	availableKeyPairs := FillKeyPairs()
-	fmt.Println(len(availableKeyPairs))
 
 	listener, err := createListener()
 	if err != nil {
@@ -214,7 +282,7 @@ func main() {
 		return
 	}
 
-	//close only when the main function ends
+	// close only when the main function ends
 	defer func(listener net.Listener) {
 		err := listener.Close()
 		if err != nil {
@@ -229,61 +297,7 @@ func main() {
 			fmt.Printf("failed to accept client: %s\n", err.Error())
 			continue
 		}
-		go handleClient(&conn)
-
-		//go handleClient(&conn)
-		/*client := Client{connection: &conn}*/
-		/*err = conn.SetDeadline(time.Now().Add(5 * time.Second))
-		if err != nil {
-			return
-		}
-
-		buffer := make([]byte, 10000)
-
-		_, err = conn.Read(buffer)
-		if err != nil {
-			fmt.Println("failed to read data from client")
-			return
-		}
-
-		messages := splitIntoMessages(buffer)
-
-		if receivedMoreMessages(messages) {
-			//continue continue doing more phases at once
-		} else {
-			//do one phase, then the other
-		}*/
-		//wait for client to send name
-		/*client.Name, err = readName(scanner)
-		fmt.Println(client.Name)
-		if errorOccurred(err, "failed to read name") {
-			closeSocket(&client)
-			continue
-		}
-
-		//position return
-		client.NameTerminatorPos, err = checkValidityOfName(client.Name)
-		if errorOccurred(err, "") {
-			_ = writeToClient(&client, err.Error())
-			closeSocket(&client)
-			continue
-		}
-
-		err = requestKeyID(&client)
-		if errorOccurred(err, "unable to request key id") {
-			closeSocket(&client)
-			continue
-		}
-
-		//wait for client to send key id number
-		client.KeyID, err = readKeyID(&client)
-		if errorOccurred(err, "unable to read key id") {
-			closeSocket(&client)
-			continue
-		}
-		fmt.Printf("client id: %d\n", client.KeyID)
-
-		hash := countHash(&client, availableKeyPairs)
-		fmt.Printf("hash: %d\n", hash)*/
+		client := Client{conn: &conn}
+		go handleClient(&client)
 	}
 }
