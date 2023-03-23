@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -171,17 +172,12 @@ func codesMatch(code1 int, code2 int) bool {
 }
 
 func extractPosition(buffer string, terminator string) (Position, error) {
-	if strings.Contains(buffer, ".") || strings.Contains(buffer, ",") {
-		return Position{0, 0}, errors.New("floating coordinate")
+	pattern := "OK (-?[0-9]+) (-?[0-9]+)" + terminator
+	matched, _ := regexp.MatchString(pattern, buffer+terminator)
+	if !matched {
+		return Position{0, 0}, errors.New("wrong coordinates format")
 	}
-	/*coordinateSpaceIndex := strings.Index(buffer, " ")
-	impostorSpaceIndex := strings.Index(buffer[coordinateSpaceIndex:], " ")
-	if buffer[coordinateSpaceIndex+1] == ' ' || impostorSpaceIndex != -1*/
-	numSpaces := strings.Count(buffer, " ")
-	if numSpaces > 1 {
-		return Position{0, 0}, errors.New("extra space")
-	}
-	_ = strings.Index(buffer, TERMINATOR)
+	_ = strings.Index(buffer, ",")
 	return Position{
 		x: 0,
 		y: 0,
