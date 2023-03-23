@@ -13,28 +13,53 @@ const (
 	SERVER_ADDRESS = "localhost"
 	SERVER_PORT    = "3999"
 	PROTOCOL       = "tcp"
+)
 
+const (
 	TERMINATOR = "\a\b"
 
-	MAX_NAME_LEN           = 18
-	MIN_KEY_INDEX          = 0
-	MAX_KEY_INDEX          = 4
-	UNABLE_TO_CLOSE_SOCKET = "unable to cutOff conn\n"
+	MAX_NAME_LEN  = 18
+	MIN_KEY_INDEX = 0
+	MAX_KEY_INDEX = 4
+)
 
-	SERVER_KEY_REQUEST = "107 KEY REQUEST\a\b"
+type ServerMessage string
 
-	SERVER_MOVE = "102 MOVE\a\b"
+const (
+	UNABLE_TO_CLOSE_SOCKET ServerMessage = "unable to cutOff conn\n"
 
-	SERVER_TURN_LEFT  = "103 TURN LEFT\a\b"
-	SERVER_TURN_RIGHT = "104 TURN RIGHT\a\b"
-	SERVER_PICK_UP    = "105 GET MESSAGE\a\b"
-	SERVER_LOGOUT     = "106 TURN LEFT\a\b"
+	SERVER_KEY_REQUEST ServerMessage = "107 KEY REQUEST" + TERMINATOR
 
-	SERVER_OK                     = "200 OK\a\b"
-	SERVER_LOGIN_FAILED           = "300 LOGIN FAILED\a\b"
-	SERVER_SYNTAX_ERROR           = "301 SYNTAX ERROR\a\b"
-	SERVER_LOGIC_ERROR            = "302 LOGIC ERROR\a\b"
-	SERVER_KEY_OUT_OF_RANGE_ERROR = "303 KEY OUT OF RANGE\a\b"
+	SERVER_MOVE ServerMessage = "102 MOVE" + TERMINATOR
+
+	SERVER_TURN_LEFT  ServerMessage = "103 TURN LEFT" + TERMINATOR
+	SERVER_TURN_RIGHT ServerMessage = "104 TURN RIGHT" + TERMINATOR
+	SERVER_PICK_UP    ServerMessage = "105 GET MESSAGE" + TERMINATOR
+	SERVER_LOGOUT     ServerMessage = "106 TURN LEFT" + TERMINATOR
+
+	SERVER_OK                     ServerMessage = "200 OK" + TERMINATOR
+	SERVER_LOGIN_FAILED           ServerMessage = "300 LOGIN FAILED" + TERMINATOR
+	SERVER_SYNTAX_ERROR           ServerMessage = "301 SYNTAX ERROR" + TERMINATOR
+	SERVER_LOGIC_ERROR            ServerMessage = "302 LOGIC ERROR" + TERMINATOR
+	SERVER_KEY_OUT_OF_RANGE_ERROR ServerMessage = "303 KEY OUT OF RANGE" + TERMINATOR
+)
+
+type State int
+
+const (
+	USERNAME   State = 0
+	KEY        State = 1
+	VALIDATION State = 2
+	MOVE       State = 3
+)
+
+type MoveState int
+
+const (
+	DERIVE_POS MoveState = 0
+	STRAIGHT   MoveState = 1
+	RIGHT      MoveState = 2
+	LEFT       MoveState = 3
 )
 
 type KeyPair struct {
@@ -79,8 +104,8 @@ func cutOff(client *Client) error {
 	return (*client.conn).Close()
 }
 
-func sendMessage(client *Client, message string) error {
-	_, err := fmt.Fprintf(*client.conn, message)
+func sendMessage(client *Client, command ServerMessage) error {
+	_, err := fmt.Fprintf(*client.conn, string(command))
 	return err
 }
 
@@ -146,8 +171,8 @@ func codesMatch(code1 int, code2 int) bool {
 
 func handleClient(client *Client) {
 
-	phase := "username"
-	movePhase := "straight2"
+	phase := USERNAME
+	movePhase := DERIVE_POS
 	buffer := ""
 	for {
 		// Read data from client
@@ -167,14 +192,15 @@ func handleClient(client *Client) {
 		for {
 			index := strings.Index(buffer, TERMINATOR)
 			if index == -1 {
+				//check if we can early exit the program if error occurs
 				switch phase {
-				case "username":
+				case USERNAME:
 					if len(buffer) > MAX_NAME_LEN {
 						sendMessage(client, SERVER_SYNTAX_ERROR)
 						cutOff(client)
 						return
 					}
-				case "confirmation":
+				case VALIDATION:
 					codeAsNumber, _ := strconv.Atoi(buffer)
 					if len(buffer) > 5 || codeAsNumber > 65536 {
 						sendMessage(client, SERVER_SYNTAX_ERROR)
@@ -192,21 +218,29 @@ func handleClient(client *Client) {
 			fmt.Printf("Received message: %s\n", message)
 
 			switch phase {
-			case "move":
+			case MOVE:
 				client.pos.x = 0
 				client.pos.y = 0
 				switch movePhase {
-				case "straight":
+				case STRAIGHT:
 					sendMessage(client, SERVER_MOVE)
-				case "right":
+				case RIGHT:
 					sendMessage(client, SERVER_TURN_RIGHT)
-				case "left":
+				case LEFT:
 					sendMessage(client, SERVER_TURN_LEFT)
-				case "straight2":
+				case DERIVE_POS:
 					sendMessage(client, SERVER_MOVE)
+					_, err := (*client.conn).Read(data)
+					if err != nil {
+						//possible more exit point/non-standard situations?
+						log.Println("Error reading data:", err)
+						cutOff(client)
+						return
+					}
+
 				}
 
-			case "username":
+			case USERNAME:
 				if len(message) > MAX_NAME_LEN {
 					sendMessage(client, SERVER_SYNTAX_ERROR)
 					cutOff(client)
@@ -214,9 +248,9 @@ func handleClient(client *Client) {
 				}
 				client.setName(message)
 				sendMessage(client, SERVER_KEY_REQUEST)
-				phase = "key"
+				phase = KEY
 
-			case "key":
+			case KEY:
 				keyID, err := strconv.Atoi(message)
 				if err != nil {
 					sendMessage(client, SERVER_SYNTAX_ERROR)
@@ -235,11 +269,17 @@ func handleClient(client *Client) {
 				serverConfirmationCode := createConfirmationCode(client.getHash(), getKeyPair(client.getKeyIndex()).ServerKey)
 
 				stringHash := strconv.Itoa(serverConfirmationCode) + "\a\b"
-				sendMessage(client, stringHash)
+				sendMessage(client, ServerMessage(stringHash))
 
-				phase = "confirmation"
-			case "confirmation":
-				clientConfirmationCode, _ := strconv.Atoi(message)
+				phase = VALIDATION
+
+			case VALIDATION:
+				clientConfirmationCode, err := strconv.Atoi(message)
+				if err != nil || clientConfirmationCode > 65535 {
+					sendMessage(client, SERVER_SYNTAX_ERROR)
+					cutOff(client)
+					break
+				}
 				validationCode := createConfirmationCode(client.getHash(), getKeyPair(client.getKeyIndex()).ClientKey)
 
 				if !codesMatch(validationCode, clientConfirmationCode) {
@@ -248,7 +288,7 @@ func handleClient(client *Client) {
 					break
 				}
 				sendMessage(client, SERVER_OK)
-				phase = "move"
+				phase = MOVE
 			}
 		}
 	}
@@ -276,7 +316,10 @@ func main() {
 			fmt.Printf("failed to accept client: %s\n", err.Error())
 			continue
 		}
-		conn.SetDeadline(time.Now().Add(1 * time.Second))
+		err = conn.SetDeadline(time.Now().Add(1 * time.Second))
+		if err != nil {
+			return
+		}
 		client := Client{conn: &conn}
 		go handleClient(&client)
 	}
