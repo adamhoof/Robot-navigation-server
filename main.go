@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -169,58 +170,133 @@ func codesMatch(code1 int, code2 int) bool {
 	return code1 == code2
 }
 
+func extractPosition(buffer string, terminator string) (Position, error) {
+	if strings.Contains(buffer, ".") || strings.Contains(buffer, ",") {
+		return Position{0, 0}, errors.New("floating coordinate")
+	}
+	/*coordinateSpaceIndex := strings.Index(buffer, " ")
+	impostorSpaceIndex := strings.Index(buffer[coordinateSpaceIndex:], " ")
+	if buffer[coordinateSpaceIndex+1] == ' ' || impostorSpaceIndex != -1*/
+	numSpaces := strings.Count(buffer, " ")
+	if numSpaces > 1 {
+		return Position{0, 0}, errors.New("extra space")
+	}
+	_ = strings.Index(buffer, TERMINATOR)
+	return Position{
+		x: 0,
+		y: 0,
+	}, nil
+}
+
+func messageIncomplete(index int) bool {
+	return index == -1
+}
+
 func handleClient(client *Client) {
 
 	phase := USERNAME
 	movePhase := DERIVE_POS
-	buffer := ""
+
+	dataAsString := ""
+	data := make([]byte, 1024)
+
 	for {
 		// Read data from client
-		data := make([]byte, 1024)
 		n, err := (*client.conn).Read(data)
 		if err != nil {
 			//possible more exit point/non-standard situations?
 			log.Println("Error reading data:", err)
 			cutOff(client)
-			break
+			return
 		}
 
-		// Append data to buffer
-		buffer += string(data[:n])
+		// Append data to dataAsString
+		dataAsString += string(data[:n])
 
-		// Check if buffer contains a complete message
-		for {
-			index := strings.Index(buffer, TERMINATOR)
-			if index == -1 {
-				//check if we can early exit the program if error occurs
-				switch phase {
-				case USERNAME:
-					if len(buffer) > MAX_NAME_LEN {
-						sendMessage(client, SERVER_SYNTAX_ERROR)
-						cutOff(client)
-						return
-					}
-				case VALIDATION:
-					codeAsNumber, _ := strconv.Atoi(buffer)
-					if len(buffer) > 5 || codeAsNumber > 65536 {
-						sendMessage(client, SERVER_SYNTAX_ERROR)
-						cutOff(client)
-					}
+		// Check if dataAsString contains a complete message
+
+		terminatorIndex := strings.Index(dataAsString, TERMINATOR)
+		if messageIncomplete(terminatorIndex) {
+			//check if we can early exit the program if error occurs
+			switch phase {
+			case USERNAME:
+				if len(dataAsString) > MAX_NAME_LEN {
+					sendMessage(client, SERVER_SYNTAX_ERROR)
+
+					cutOff(client)
+					return
 				}
-				break // Incomplete message in buffer, wait for more data
+			case VALIDATION:
+				codeAsNumber, _ := strconv.Atoi(dataAsString)
+				if len(dataAsString) > 5 || codeAsNumber > 65536 {
+					sendMessage(client, SERVER_SYNTAX_ERROR)
+					cutOff(client)
+					return
+				}
+			}
+			fmt.Println("continuing")
+			continue // Incomplete message in dataAsString, wait for more data
+		}
+
+		// Extract complete message from dataAsString
+		message := dataAsString[:terminatorIndex]
+		dataAsString = dataAsString[terminatorIndex+2:]
+
+		// Process complete message
+		fmt.Printf("Received message: %s\n", message)
+
+		switch phase {
+		case USERNAME:
+			if len(message) > MAX_NAME_LEN {
+				sendMessage(client, SERVER_SYNTAX_ERROR)
+				cutOff(client)
+				return
+			}
+			client.setName(message)
+			sendMessage(client, SERVER_KEY_REQUEST)
+			phase = KEY
+		case KEY:
+			keyID, err := strconv.Atoi(message)
+			if err != nil {
+				sendMessage(client, SERVER_SYNTAX_ERROR)
+				cutOff(client)
+				return
 			}
 
-			// Extract complete message from buffer
-			message := buffer[:index]
-			buffer = buffer[index+2:]
+			client.setKeyIndex(keyID)
+			if keyID < MIN_KEY_INDEX || keyID > MAX_KEY_INDEX {
+				sendMessage(client, SERVER_KEY_OUT_OF_RANGE_ERROR)
+				cutOff(client)
+				return
+			}
 
-			// Process complete message
-			fmt.Printf("Received message: %s\n", message)
+			client.setHash(countHashFromName(client.getName()))
+			serverConfirmationCode := createConfirmationCode(client.getHash(), getKeyPair(client.getKeyIndex()).ServerKey)
 
-			switch phase {
-			case MOVE:
-				client.pos.x = 0
-				client.pos.y = 0
+			stringHash := strconv.Itoa(serverConfirmationCode) + "\a\b"
+			sendMessage(client, ServerMessage(stringHash))
+
+			phase = VALIDATION
+		case VALIDATION:
+			clientConfirmationCode, err := strconv.Atoi(message)
+			if err != nil || clientConfirmationCode > 65535 {
+				sendMessage(client, SERVER_SYNTAX_ERROR)
+				cutOff(client)
+				return
+			}
+			validationCode := createConfirmationCode(client.getHash(), getKeyPair(client.getKeyIndex()).ClientKey)
+
+			if !codesMatch(validationCode, clientConfirmationCode) {
+				sendMessage(client, SERVER_LOGIN_FAILED)
+				cutOff(client)
+				return
+			}
+			sendMessage(client, SERVER_OK)
+			phase = MOVE
+			sendMessage(client, SERVER_MOVE)
+		case MOVE:
+			client.pos = Position{x: 0, y: 0}
+			for {
 				switch movePhase {
 				case STRAIGHT:
 					sendMessage(client, SERVER_MOVE)
@@ -229,66 +305,13 @@ func handleClient(client *Client) {
 				case LEFT:
 					sendMessage(client, SERVER_TURN_LEFT)
 				case DERIVE_POS:
-					sendMessage(client, SERVER_MOVE)
-					_, err := (*client.conn).Read(data)
+					client.pos, err = extractPosition(message, TERMINATOR)
 					if err != nil {
-						//possible more exit point/non-standard situations?
-						log.Println("Error reading data:", err)
+						sendMessage(client, SERVER_SYNTAX_ERROR)
 						cutOff(client)
 						return
 					}
-
 				}
-
-			case USERNAME:
-				if len(message) > MAX_NAME_LEN {
-					sendMessage(client, SERVER_SYNTAX_ERROR)
-					cutOff(client)
-					break
-				}
-				client.setName(message)
-				sendMessage(client, SERVER_KEY_REQUEST)
-				phase = KEY
-
-			case KEY:
-				keyID, err := strconv.Atoi(message)
-				if err != nil {
-					sendMessage(client, SERVER_SYNTAX_ERROR)
-					cutOff(client)
-					break
-				}
-
-				client.setKeyIndex(keyID)
-				if keyID < MIN_KEY_INDEX || keyID > MAX_KEY_INDEX {
-					sendMessage(client, SERVER_KEY_OUT_OF_RANGE_ERROR)
-					cutOff(client)
-					break
-				}
-
-				client.setHash(countHashFromName(client.getName()))
-				serverConfirmationCode := createConfirmationCode(client.getHash(), getKeyPair(client.getKeyIndex()).ServerKey)
-
-				stringHash := strconv.Itoa(serverConfirmationCode) + "\a\b"
-				sendMessage(client, ServerMessage(stringHash))
-
-				phase = VALIDATION
-
-			case VALIDATION:
-				clientConfirmationCode, err := strconv.Atoi(message)
-				if err != nil || clientConfirmationCode > 65535 {
-					sendMessage(client, SERVER_SYNTAX_ERROR)
-					cutOff(client)
-					break
-				}
-				validationCode := createConfirmationCode(client.getHash(), getKeyPair(client.getKeyIndex()).ClientKey)
-
-				if !codesMatch(validationCode, clientConfirmationCode) {
-					sendMessage(client, SERVER_LOGIN_FAILED)
-					cutOff(client)
-					break
-				}
-				sendMessage(client, SERVER_OK)
-				phase = MOVE
 			}
 		}
 	}
