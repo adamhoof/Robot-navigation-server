@@ -57,16 +57,7 @@ const (
 	KEY              Phase = 1
 	VALIDATION       Phase = 2
 	MOVE             Phase = 3
-	END              Phase = 4
-)
-
-type MovePhase int
-
-const (
-	DERIVE_POS MovePhase = 0
-	STRAIGHT   MovePhase = 1
-	RIGHT      MovePhase = 2
-	LEFT       MovePhase = 3
+	WIN              Phase = 4
 )
 
 type Direction int
@@ -96,7 +87,7 @@ type Client struct {
 	pos       Position
 	lastPos   Position
 	dir       Direction
-	numMoves  uint16
+	quadrant  Quadrant
 }
 
 type Position struct {
@@ -154,6 +145,22 @@ func (client *Client) setHash(hash int) {
 func (client *Client) getHash() int {
 	return client.Hash
 }
+
+func (client *Client) getXPos() int {
+	return client.pos.x
+}
+
+func (client *Client) getYPos() int {
+	return client.pos.y
+}
+
+func (client *Client) getLastXPos() int {
+	return client.lastPos.x
+}
+
+func (client *Client) getLastYPos() int {
+	return client.lastPos.y
+}
 func getKeyPair(index int) KeyPair {
 	switch index {
 	case 0:
@@ -207,21 +214,12 @@ func isCenterPos(position *Position) bool {
 	return position.x == 0 && position.y == 0
 }
 
-func initialMoveSequenceDone(numSteps uint16) bool {
-	return numSteps >= 2
-}
-
 func unknownDirection(direction Direction) bool {
 	return direction == UNKNOWN
 }
-
 func xAxisCloser(pos *Position) bool {
-	return math.Abs(float64(pos.x)) <= math.Abs(float64(pos.y))
+	return math.Abs(float64(pos.y)) <= math.Abs(float64(pos.x))
 }
-
-/*func movingAwayFromXAxis(position *Position, lastPosition *Position) bool {
-
-}*/
 
 type MessageType int
 
@@ -232,6 +230,15 @@ const (
 	SINGLE_AND_INCOMPLETE_MESSAGE MessageType = 4
 	MULTI_AND_INCOMPLETE_MESSAGE  MessageType = 5
 	BRUH_MESSAGE                  MessageType = 6
+)
+
+type Quadrant int
+
+const (
+	UP_LEFT    Quadrant = 1
+	UP_RIGHT   Quadrant = 2
+	DOWN_LEFT  Quadrant = 3
+	DOWN_RIGHT Quadrant = 4
 )
 
 func deriveMessageType(message string, terminator string) MessageType {
@@ -286,7 +293,71 @@ func deriveDir(position *Position, lastPosition *Position) Direction {
 	//should never happen
 	return UNKNOWN
 }
+func setCorrectDirection(direction *Direction, position *Position) MovePhase {
+	switch *direction {
+	case UP:
+		if position.y > 0 {
+			*direction = DOWN
+			return TURN180_DEG
+		} else if position.y == 0 {
+			if position.x < 0 {
+				*direction = R
+				return RIGHT
+			}
+			*direction = L
+			return LEFT
+		}
+		return TOWARDS_X_AXIS
 
+	case DOWN:
+		if position.y < 0 {
+			*direction = UP
+			return TURN180_DEG
+		} else if position.y == 0 {
+			if position.x < 0 {
+				*direction = L
+				return LEFT
+			}
+			*direction = R
+			return RIGHT
+		}
+		return TOWARDS_X_AXIS
+
+	case R:
+		if position.x > 0 {
+			*direction = L
+			return TURN180_DEG
+		} else if position.x == 0 {
+			if position.y < 0 {
+				*direction = L
+				return LEFT
+			}
+			*direction = R
+			return RIGHT
+		}
+		return TOWARDS_Y_AXIS
+
+	case L:
+		if position.x < 0 {
+			*direction = R
+			return TURN180_DEG
+		} else if position.x == 0 {
+			if position.y < 0 {
+				*direction = R
+				return RIGHT
+			}
+			*direction = L
+			return LEFT
+		}
+		return TOWARDS_Y_AXIS
+	}
+
+	return UNDEF
+}
+
+func positionUnchanged(pos *Position, lastPos *Position) bool {
+	return pos.x == lastPos.x && pos.y == lastPos.y
+}
 func handleSingleMessage(singleMessage string, client *Client) (response ServerMessage, nextPhase Phase) {
 	switch client.phase {
 
@@ -329,8 +400,6 @@ func handleSingleMessage(singleMessage string, client *Client) (response ServerM
 		return SERVER_MOVE, MOVE
 
 	case MOVE:
-		client.numMoves++
-
 		var err error
 		client.lastPos = client.pos
 		client.pos, err = extractPosition(singleMessage)
@@ -338,28 +407,90 @@ func handleSingleMessage(singleMessage string, client *Client) (response ServerM
 			return SERVER_SYNTAX_ERROR, CLOSE_CONNECTION
 		}
 		if isCenterPos(&client.pos) {
-			return SERVER_PICK_UP, END
+			return SERVER_PICK_UP, WIN
 		}
-		if !initialMoveSequenceDone(client.numMoves) {
+
+		client.dir = deriveDir(&client.pos, &client.lastPos)
+
+		switch client.movePhase {
+		case LOCATE:
+			client.movePhase = CALIBRATE
 			return SERVER_MOVE, MOVE
-		}
-		if unknownDirection(client.dir) {
-			client.dir = deriveDir(&client.pos, &client.lastPos)
-		}
-		if xAxisCloser(&client.pos) {
-			if client.dir == UP || client.dir == DOWN {
 
+		case CALIBRATE:
+			if positionUnchanged(&client.pos, &client.lastPos) {
+				client.movePhase = LOCATE
+				return SERVER_TURN_RIGHT, MOVE
 			}
-			/*if movingAwayFromXAxis(&client.pos, &client.lastPos) {
+			/*
+				if client.getXPos() == 0 {
+					if client.getYPos() > 0 {
+						switch client.dir {
+						case DOWN:
+							client.movePhase = TOWARDS_X_AXIS
+							return SERVER_MOVE, MOVE
+						case UP:
+							client.movePhase = TURN180_DEG
+							return SERVER_TURN_LEFT, MOVE
+						case R:
+							client.movePhase = TURN90_DEG_RIGHT
+							return SERVER_TURN_RIGHT, MOVE
+						case L:
+							client.movePhase = TURN90_DEG_LEFT
+							return SERVER_TURN_LEFT, MOVE
+						}
 
-			}*/
+					} else if client.getYPos() < 0 {
+						switch client.dir {
+						case DOWN:
+							client.movePhase = TURN180_DEG
+							return SERVER_TURN_LEFT, MOVE
+						case UP:
+							client.movePhase = TOWARDS_X_AXIS
+							return SERVER_MOVE, MOVE
+						case R:
+							client.movePhase = TURN90_DEG_LEFT
+							return SERVER_TURN_LEFT, MOVE
+						case L:
+							client.movePhase = TURN90_DEG_LEFT
+							return SERVER_TURN_LEFT, MOVE
+						}
+					}
+				}*/
+
+			switch setCorrectDirection(&client.dir, &client.pos) {
+			case TURN180_DEG:
+				client.movePhase = LEFT
+				return SERVER_TURN_LEFT, MOVE
+			}
+
+		case LEFT:
+			//TODO client.movePhase == ???????
+			return SERVER_TURN_LEFT, MOVE
+
 		}
-
-	case END:
+	case WIN:
 		return SERVER_LOGOUT, CLOSE_CONNECTION
 	}
 	return
 }
+
+type MovePhase int
+
+const (
+	LOCATE      MovePhase = 0
+	CALIBRATE   MovePhase = 1
+	STRAIGHT    MovePhase = 2
+	RIGHT       MovePhase = 3
+	LEFT        MovePhase = 4
+	UNDEF       MovePhase = 5
+	TURN180_DEG MovePhase = 6
+
+	TURN90_DEG_LEFT  MovePhase = 7
+	TURN90_DEG_RIGHT MovePhase = 9
+	TOWARDS_X_AXIS   MovePhase = 8
+	TOWARDS_Y_AXIS   MovePhase = 10
+)
 
 func handleClient(client *Client) {
 	var buffer = make([]byte, 1024)
@@ -417,6 +548,7 @@ func handleClient(client *Client) {
 			message = ""
 
 		case MULTI_MESSAGE:
+			//TODO? multi times handle single message??????????????????
 			for {
 				terminatorIndex = strings.Index(message, TERMINATOR)
 				if terminatorIndex == -1 {
@@ -527,7 +659,7 @@ func main() {
 		if err != nil {
 			return
 		}
-		client := Client{conn: &conn, phase: USERNAME, movePhase: DERIVE_POS, dir: UNKNOWN, numMoves: 0}
+		client := Client{conn: &conn, phase: USERNAME, movePhase: LOCATE, dir: UNKNOWN}
 		go handleClient(&client)
 	}
 }
