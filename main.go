@@ -87,6 +87,7 @@ type Client struct {
 	pos       Position
 	lastPos   Position
 	dir       Direction
+	targetDir Direction
 	quadrant  Quadrant
 }
 
@@ -271,34 +272,27 @@ func deriveMessageType(message string, terminator string) MessageType {
 }
 
 func deriveDir(position *Position, lastPosition *Position) Direction {
-	//moved up or down
 	if position.x == lastPosition.x {
-		if position.y == lastPosition.y {
-			return AVOID_OBSTACLE
-		} else if position.y < lastPosition.y {
+		if position.y < lastPosition.y {
 			return DOWN
-		} else {
-			return UP
 		}
-		//moved right or left
+		return UP
+
 	} else if position.y == lastPosition.y {
-		if position.x == lastPosition.x {
-			return AVOID_OBSTACLE
-		} else if position.x < lastPosition.x {
+		if position.x < lastPosition.x {
 			return L
-		} else {
-			return R
 		}
+		return R
 	}
 	//should never happen
 	return UNKNOWN
 }
-func setCorrectDirection(direction *Direction, position *Position) MovePhase {
+func calibrateDirection(direction *Direction, position *Position) MovePhase {
 	switch *direction {
 	case UP:
 		if position.y > 0 {
 			*direction = DOWN
-			return TURN180_DEG
+			return TURN_180_DEG
 		} else if position.y == 0 {
 			if position.x < 0 {
 				*direction = R
@@ -307,12 +301,12 @@ func setCorrectDirection(direction *Direction, position *Position) MovePhase {
 			*direction = L
 			return LEFT
 		}
-		return TOWARDS_X_AXIS
+		return STRAIGHT
 
 	case DOWN:
 		if position.y < 0 {
 			*direction = UP
-			return TURN180_DEG
+			return TURN_180_DEG
 		} else if position.y == 0 {
 			if position.x < 0 {
 				*direction = L
@@ -321,12 +315,12 @@ func setCorrectDirection(direction *Direction, position *Position) MovePhase {
 			*direction = R
 			return RIGHT
 		}
-		return TOWARDS_X_AXIS
+		return STRAIGHT
 
 	case R:
 		if position.x > 0 {
 			*direction = L
-			return TURN180_DEG
+			return TURN_180_DEG
 		} else if position.x == 0 {
 			if position.y < 0 {
 				*direction = L
@@ -335,12 +329,12 @@ func setCorrectDirection(direction *Direction, position *Position) MovePhase {
 			*direction = R
 			return RIGHT
 		}
-		return TOWARDS_Y_AXIS
+		return STRAIGHT
 
 	case L:
 		if position.x < 0 {
 			*direction = R
-			return TURN180_DEG
+			return TURN_180_DEG
 		} else if position.x == 0 {
 			if position.y < 0 {
 				*direction = R
@@ -349,14 +343,14 @@ func setCorrectDirection(direction *Direction, position *Position) MovePhase {
 			*direction = L
 			return LEFT
 		}
-		return TOWARDS_Y_AXIS
+		return STRAIGHT
 	}
 
 	return UNDEF
 }
 
-func positionUnchanged(pos *Position, lastPos *Position) bool {
-	return pos.x == lastPos.x && pos.y == lastPos.y
+func positionChanged(pos Position, lastPos Position) bool {
+	return !(pos.x == lastPos.x && pos.y == lastPos.y)
 }
 func handleSingleMessage(singleMessage string, client *Client) (response ServerMessage, nextPhase Phase) {
 	switch client.phase {
@@ -410,63 +404,85 @@ func handleSingleMessage(singleMessage string, client *Client) (response ServerM
 			return SERVER_PICK_UP, WIN
 		}
 
-		client.dir = deriveDir(&client.pos, &client.lastPos)
+		if positionChanged(client.pos, client.lastPos) {
+			client.dir = deriveDir(&client.pos, &client.lastPos)
+		}
 
+	NOTHING:
 		switch client.movePhase {
 		case LOCATE:
 			client.movePhase = CALIBRATE
 			return SERVER_MOVE, MOVE
 
 		case CALIBRATE:
-			if positionUnchanged(&client.pos, &client.lastPos) {
+			if !positionChanged(client.pos, client.lastPos) {
 				client.movePhase = LOCATE
 				return SERVER_TURN_RIGHT, MOVE
 			}
-			/*
-				if client.getXPos() == 0 {
-					if client.getYPos() > 0 {
-						switch client.dir {
-						case DOWN:
-							client.movePhase = TOWARDS_X_AXIS
-							return SERVER_MOVE, MOVE
-						case UP:
-							client.movePhase = TURN180_DEG
-							return SERVER_TURN_LEFT, MOVE
-						case R:
-							client.movePhase = TURN90_DEG_RIGHT
-							return SERVER_TURN_RIGHT, MOVE
-						case L:
-							client.movePhase = TURN90_DEG_LEFT
-							return SERVER_TURN_LEFT, MOVE
-						}
-
-					} else if client.getYPos() < 0 {
-						switch client.dir {
-						case DOWN:
-							client.movePhase = TURN180_DEG
-							return SERVER_TURN_LEFT, MOVE
-						case UP:
-							client.movePhase = TOWARDS_X_AXIS
-							return SERVER_MOVE, MOVE
-						case R:
-							client.movePhase = TURN90_DEG_LEFT
-							return SERVER_TURN_LEFT, MOVE
-						case L:
-							client.movePhase = TURN90_DEG_LEFT
-							return SERVER_TURN_LEFT, MOVE
-						}
-					}
-				}*/
-
-			switch setCorrectDirection(&client.dir, &client.pos) {
-			case TURN180_DEG:
-				client.movePhase = LEFT
+			client.movePhase = calibrateDirection(&client.dir, &client.pos)
+			switch client.movePhase {
+			case TURN_180_DEG:
+				client.movePhase = FINISH_TURN_180_DEG
+				return SERVER_TURN_LEFT, MOVE
+			case STRAIGHT:
+				client.movePhase = STRAIGHT
+				return SERVER_MOVE, MOVE
+			case RIGHT:
+				client.movePhase = STRAIGHT
+				return SERVER_TURN_RIGHT, MOVE
+			case LEFT:
+				client.movePhase = STRAIGHT
 				return SERVER_TURN_LEFT, MOVE
 			}
 
-		case LEFT:
-			//TODO client.movePhase == ???????
+		case FINISH_TURN_180_DEG:
+			client.movePhase = AFTER_TURN_180_DEG_STRAIGHT
 			return SERVER_TURN_LEFT, MOVE
+		case AFTER_TURN_180_DEG_STRAIGHT:
+			client.movePhase = STRAIGHT
+			return SERVER_MOVE, MOVE
+
+		case STRAIGHT:
+			//detect collision
+			if !positionChanged(client.pos, client.lastPos) {
+				//DODGE_OBSTACLE_1 means initiate dodge obstacle phase
+				client.movePhase = DODGE_OBSTACLE_1
+				return SERVER_TURN_LEFT, MOVE
+			}
+			if client.getYPos() == 0 || client.getXPos() == 0 {
+				client.movePhase = CALIBRATE
+				goto NOTHING
+			}
+			return SERVER_MOVE, MOVE
+
+		case DODGE_OBSTACLE_1:
+			client.movePhase = DODGE_OBSTACLE_2
+			return SERVER_MOVE, MOVE
+		case DODGE_OBSTACLE_2:
+			client.movePhase = DODGE_OBSTACLE_3
+			return SERVER_TURN_RIGHT, MOVE
+		case DODGE_OBSTACLE_3:
+			client.movePhase = DODGE_OBSTACLE_4
+			return SERVER_MOVE, MOVE
+		case DODGE_OBSTACLE_4:
+			client.movePhase = DODGE_OBSTACLE_5
+			return SERVER_MOVE, MOVE
+		case DODGE_OBSTACLE_5:
+			client.movePhase = DODGE_OBSTACLE_6
+			return SERVER_TURN_RIGHT, MOVE
+		case DODGE_OBSTACLE_6:
+			client.movePhase = DODGE_OBSTACLE_7
+			return SERVER_MOVE, MOVE
+		case DODGE_OBSTACLE_7:
+			client.movePhase = DODGE_OBSTACLE_8
+			return SERVER_TURN_LEFT, MOVE
+		case DODGE_OBSTACLE_8:
+			if client.pos.x == 0 || client.pos.y == 0 {
+				client.movePhase = CALIBRATE
+				goto NOTHING
+			}
+			client.movePhase = STRAIGHT
+			return SERVER_MOVE, MOVE
 
 		}
 	case WIN:
@@ -478,18 +494,24 @@ func handleSingleMessage(singleMessage string, client *Client) (response ServerM
 type MovePhase int
 
 const (
-	LOCATE      MovePhase = 0
-	CALIBRATE   MovePhase = 1
-	STRAIGHT    MovePhase = 2
-	RIGHT       MovePhase = 3
-	LEFT        MovePhase = 4
-	UNDEF       MovePhase = 5
-	TURN180_DEG MovePhase = 6
+	LOCATE                      MovePhase = 0
+	CALIBRATE                   MovePhase = 1
+	STRAIGHT                    MovePhase = 2
+	RIGHT                       MovePhase = 3
+	LEFT                        MovePhase = 4
+	TURN_180_DEG                MovePhase = 6
+	FINISH_TURN_180_DEG         MovePhase = 7
+	AFTER_TURN_180_DEG_STRAIGHT MovePhase = 12
+	DODGE_OBSTACLE_1            MovePhase = 13
+	DODGE_OBSTACLE_2            MovePhase = 14
+	DODGE_OBSTACLE_3            MovePhase = 15
+	DODGE_OBSTACLE_4            MovePhase = 16
+	DODGE_OBSTACLE_5            MovePhase = 17
+	DODGE_OBSTACLE_6            MovePhase = 18
+	DODGE_OBSTACLE_7            MovePhase = 19
+	DODGE_OBSTACLE_8            MovePhase = 20
 
-	TURN90_DEG_LEFT  MovePhase = 7
-	TURN90_DEG_RIGHT MovePhase = 9
-	TOWARDS_X_AXIS   MovePhase = 8
-	TOWARDS_Y_AXIS   MovePhase = 10
+	UNDEF MovePhase = 30
 )
 
 func handleClient(client *Client) {
@@ -536,6 +558,9 @@ func handleClient(client *Client) {
 		case SINGLE_MESSAGE:
 			nonTerminatedMessage := message[:terminatorIndex]
 
+			/*if nonTerminatedMessage == "bypass" {
+				client.phase = MOVE
+			}*/
 			var response ServerMessage
 			response, client.phase = handleSingleMessage(nonTerminatedMessage, client)
 
