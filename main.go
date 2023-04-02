@@ -558,9 +558,6 @@ func handleClient(client *Client) {
 		case SINGLE_MESSAGE:
 			nonTerminatedMessage := message[:terminatorIndex]
 
-			/*if nonTerminatedMessage == "bypass" {
-				client.phase = MOVE
-			}*/
 			var response ServerMessage
 			response, client.phase = handleSingleMessage(nonTerminatedMessage, client)
 
@@ -573,7 +570,6 @@ func handleClient(client *Client) {
 			message = ""
 
 		case MULTI_MESSAGE:
-			//TODO? multi times handle single message??????????????????
 			for {
 				terminatorIndex = strings.Index(message, TERMINATOR)
 				if terminatorIndex == -1 {
@@ -582,67 +578,15 @@ func handleClient(client *Client) {
 				singleMessage := message[:terminatorIndex]
 				message = message[terminatorIndex+2:]
 
-				switch client.phase {
-				case USERNAME:
-					if len(singleMessage) > MAX_NAME_LEN {
-						sendMessage(client, SERVER_SYNTAX_ERROR)
-						cutOff(client)
-						return
-					}
-					client.setName(singleMessage)
-					sendMessage(client, SERVER_KEY_REQUEST)
+				var response ServerMessage
+				response, client.phase = handleSingleMessage(singleMessage, client)
 
-					client.phase = KEY
-				case KEY:
-					keyID, err := strconv.Atoi(singleMessage)
-					if err != nil {
-						sendMessage(client, SERVER_SYNTAX_ERROR)
-						cutOff(client)
-						return
-					}
-
-					client.setKeyIndex(keyID)
-					if keyID < MIN_KEY_ID || keyID > MAX_KEY_ID {
-						sendMessage(client, SERVER_KEY_OUT_OF_RANGE_ERROR)
-						cutOff(client)
-						return
-					}
-
-					client.setHash(countHashFromName(client.getName()))
-					serverConfirmationCode := createConfirmationCode(client.getHash(), getKeyPair(client.getKeyIndex()).ServerKey)
-
-					terminatedStringHash := strconv.Itoa(serverConfirmationCode) + TERMINATOR
-					sendMessage(client, ServerMessage(terminatedStringHash))
-
-					client.phase = VALIDATION
-				case VALIDATION:
-					clientConfirmationCode, err := strconv.Atoi(singleMessage)
-					if err != nil || clientConfirmationCode > 65535 {
-						sendMessage(client, SERVER_SYNTAX_ERROR)
-						cutOff(client)
-						return
-					}
-					confirmationCode := createConfirmationCode(client.getHash(), getKeyPair(client.getKeyIndex()).ClientKey)
-
-					if !codesMatch(confirmationCode, clientConfirmationCode) {
-						sendMessage(client, SERVER_LOGIN_FAILED)
-						cutOff(client)
-						return
-					}
-					sendMessage(client, SERVER_OK)
-					sendMessage(client, SERVER_MOVE)
-
-					client.phase = MOVE
-
-				case MOVE:
-					//even if the client wanted, he can send only one message containing his coordinates within multi message
-					client.pos, err = extractPosition(message)
-					if err != nil {
-						sendMessage(client, SERVER_SYNTAX_ERROR)
-						cutOff(client)
-						return
-					}
+				if client.phase == CLOSE_CONNECTION {
+					sendMessage(client, response)
+					cutOff(client)
+					return
 				}
+				sendMessage(client, response)
 			}
 
 		case SINGLE_AND_INCOMPLETE_MESSAGE:
