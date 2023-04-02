@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"math"
 	"net"
 	"regexp"
 	"strconv"
@@ -19,10 +18,7 @@ const (
 )
 
 const (
-	TERMINATOR = "\a\b"
-
-	SPACE = ' '
-
+	TERMINATOR   = "\a\b"
 	MAX_NAME_LEN = 18
 	MIN_KEY_ID   = 0
 	MAX_KEY_ID   = 4
@@ -31,8 +27,6 @@ const (
 type ServerMessage string
 
 const (
-	UNABLE_TO_CLOSE_SOCKET = "unable to cutOff conn\n"
-
 	SERVER_KEY_REQUEST ServerMessage = "107 KEY REQUEST" + TERMINATOR
 
 	SERVER_MOVE ServerMessage = "102 MOVE" + TERMINATOR
@@ -68,8 +62,6 @@ const (
 	DOWN    Direction = 1
 	R       Direction = 2
 	L       Direction = 3
-
-	AVOID_OBSTACLE = 4
 )
 
 type KeyPair struct {
@@ -88,7 +80,6 @@ type Client struct {
 	lastPos   Position
 	dir       Direction
 	targetDir Direction
-	quadrant  Quadrant
 }
 
 type Position struct {
@@ -215,13 +206,6 @@ func isCenterPos(position *Position) bool {
 	return position.x == 0 && position.y == 0
 }
 
-func unknownDirection(direction Direction) bool {
-	return direction == UNKNOWN
-}
-func xAxisCloser(pos *Position) bool {
-	return math.Abs(float64(pos.y)) <= math.Abs(float64(pos.x))
-}
-
 type MessageType int
 
 const (
@@ -231,15 +215,6 @@ const (
 	SINGLE_AND_INCOMPLETE_MESSAGE MessageType = 4
 	MULTI_AND_INCOMPLETE_MESSAGE  MessageType = 5
 	BRUH_MESSAGE                  MessageType = 6
-)
-
-type Quadrant int
-
-const (
-	UP_LEFT    Quadrant = 1
-	UP_RIGHT   Quadrant = 2
-	DOWN_LEFT  Quadrant = 3
-	DOWN_RIGHT Quadrant = 4
 )
 
 func deriveMessageType(message string, terminator string) MessageType {
