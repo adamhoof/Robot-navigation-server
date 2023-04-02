@@ -461,6 +461,9 @@ func handleSingleMessage(singleMessage string, client *Client) (response ServerM
 
 		}
 	case WIN:
+		if len(singleMessage) > 98 {
+			return SERVER_SYNTAX_ERROR, CLOSE_CONNECTION
+		}
 		return SERVER_LOGOUT, CLOSE_CONNECTION
 	}
 	return
@@ -522,6 +525,24 @@ func handleClient(client *Client) {
 			case VALIDATION:
 				codeAsNumber, _ := strconv.Atoi(message)
 				if len(message) > 5 || codeAsNumber > 65536 {
+					sendMessage(client, SERVER_SYNTAX_ERROR)
+					cutOff(client)
+					return
+				}
+			case MOVE:
+				terminatorBeginningIndex := strings.Index(message, "\a")
+				if terminatorBeginningIndex == -1 {
+					continue
+				}
+				nonTerminatedMessage := message[:terminatorBeginningIndex]
+				_, err = extractPosition(nonTerminatedMessage)
+				if err != nil {
+					sendMessage(client, SERVER_SYNTAX_ERROR)
+					cutOff(client)
+					return
+				}
+			case WIN:
+				if len(message) > 99 {
 					sendMessage(client, SERVER_SYNTAX_ERROR)
 					cutOff(client)
 					return
