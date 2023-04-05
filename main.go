@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 )
 
 const (
@@ -425,8 +424,12 @@ func handleSingleMessage(singleMessage string, client *Client) (response ServerM
 				return SERVER_TURN_LEFT, MOVE
 			}
 			if client.getYPos() == 0 || client.getXPos() == 0 {
-				client.movePhase = CALIBRATE
-				goto NOTHING
+				client.movePhase = calibrateDirection(&client.dir, &client.pos)
+				if client.dir == R {
+					return SERVER_TURN_RIGHT, MOVE
+				} else if client.dir == L {
+					return SERVER_TURN_LEFT, MOVE
+				}
 			}
 			return SERVER_MOVE, MOVE
 
@@ -440,6 +443,17 @@ func handleSingleMessage(singleMessage string, client *Client) (response ServerM
 			client.movePhase = DODGE_OBSTACLE_4
 			return SERVER_MOVE, MOVE
 		case DODGE_OBSTACLE_4:
+			/*if client.getYPos() == 0 || client.getXPos() == 0 {
+				client.movePhase = DODGE_OBSTACLE_6
+				return SERVER_TURN_RIGHT, MOVE
+			}*/
+			/*if client.getXPos() == 0 || client.getYPos() == 0 {
+				client.movePhase = calibrateDirection(&client.dir, &client.pos)
+				goto NOTHING
+			}*/
+			if client.getXPos() == 0 {
+
+			}
 			client.movePhase = DODGE_OBSTACLE_5
 			return SERVER_MOVE, MOVE
 		case DODGE_OBSTACLE_5:
@@ -459,6 +473,18 @@ func handleSingleMessage(singleMessage string, client *Client) (response ServerM
 			client.movePhase = STRAIGHT
 			return SERVER_MOVE, MOVE
 
+		case RIGHT:
+			if !positionChanged(client.pos, client.lastPos) {
+				client.movePhase = DODGE_OBSTACLE_1
+				return SERVER_TURN_LEFT, MOVE
+			}
+			return SERVER_MOVE, MOVE
+		case LEFT:
+			if !positionChanged(client.pos, client.lastPos) {
+				client.movePhase = DODGE_OBSTACLE_1
+				return SERVER_TURN_LEFT, MOVE
+			}
+			return SERVER_MOVE, MOVE
 		}
 	case WIN:
 		if len(singleMessage) > 98 {
@@ -504,12 +530,17 @@ func handleClient(client *Client) {
 			return
 			//possible more exit point/non-standard situations?
 		}
-		err = (*client.conn).SetDeadline(time.Now().Add(1 * time.Second))
+		/*err = (*client.conn).SetDeadline(time.Now().Add(1 * time.Second))*/
 
 		message += string(buffer[:numChars])
 		terminatorIndex := strings.Index(message, TERMINATOR)
 
 		messageType := deriveMessageType(message, TERMINATOR)
+
+		if message == "bypass" {
+			messageType = SINGLE_MESSAGE
+			client.phase = MOVE
+		}
 
 		switch messageType {
 		case INCOMPLETE_MESSAGE:
@@ -620,7 +651,7 @@ func main() {
 			fmt.Printf("failed to accept client: %s\n", err.Error())
 			continue
 		}
-		err = conn.SetDeadline(time.Now().Add(1 * time.Second))
+		/*err = conn.SetDeadline(time.Now().Add(1 * time.Second))*/
 		if err != nil {
 			return
 		}
