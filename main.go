@@ -41,17 +41,24 @@ const (
 	SERVER_SYNTAX_ERROR           ServerMessage = "301 SYNTAX ERROR" + TERMINATOR
 	SERVER_LOGIC_ERROR            ServerMessage = "302 LOGIC ERROR" + TERMINATOR
 	SERVER_KEY_OUT_OF_RANGE_ERROR ServerMessage = "303 KEY OUT OF RANGE" + TERMINATOR
+
+	SERVER_NOTHING ServerMessage = "5000 NOTHING"
+
+	CLIENT_RECHARGING_MESSAGE     = "RECHARGING"
+	CLIENT_END_RECHARGING_MESSAGE = "FULL POWER"
 )
 
 type Phase int
 
 const (
-	CLOSE_CONNECTION Phase = -1
-	USERNAME         Phase = 0
-	KEY              Phase = 1
-	VALIDATION       Phase = 2
-	MOVE             Phase = 3
-	WIN              Phase = 4
+	CLOSE_CONNECTION    Phase = -1
+	USERNAME            Phase = 0
+	KEY                 Phase = 1
+	VALIDATION          Phase = 2
+	MOVE                Phase = 3
+	WIN                 Phase = 4
+	RECHARGING          Phase = 5
+	RECHARGING_FINISHED Phase = 6
 )
 
 type Direction int
@@ -73,16 +80,17 @@ type KeyPair struct {
 }
 
 type Client struct {
-	conn      *net.Conn
-	Name      string
-	KeyID     int
-	Hash      int
-	phase     Phase
-	movePhase MovePhase
-	pos       Position
-	lastPos   Position
-	dir       Direction
-	facing    Direction
+	conn                             *net.Conn
+	Name                             string
+	KeyID                            int
+	Hash                             int
+	phase                            Phase
+	rechargingInterruptedDuringPhase Phase
+	movePhase                        MovePhase
+	pos                              Position
+	lastPos                          Position
+	dir                              Direction
+	facing                           Direction
 }
 
 type Position struct {
@@ -327,6 +335,14 @@ func calibrateDirection(direction Direction, position Position) (movementDir Dir
 func positionChanged(pos Position, lastPos Position) bool {
 	return !(pos.x == lastPos.x && pos.y == lastPos.y)
 }
+
+func isRecharging(message string) bool {
+	return message == CLIENT_RECHARGING_MESSAGE
+
+}
+func validRechargingEnd(message string) bool {
+	return message == CLIENT_END_RECHARGING_MESSAGE
+}
 func handleSingleMessage(singleMessage string, client *Client) (response ServerMessage, nextPhase Phase) {
 	switch client.phase {
 
@@ -338,6 +354,11 @@ func handleSingleMessage(singleMessage string, client *Client) (response ServerM
 		return SERVER_KEY_REQUEST, KEY
 
 	case KEY:
+		if isRecharging(singleMessage) {
+			client.rechargingInterruptedDuringPhase = KEY
+			(*client.conn).SetDeadline(time.Now().Add(5 * time.Second))
+			return SERVER_NOTHING, RECHARGING
+		}
 		keyID, err := strconv.Atoi(singleMessage)
 		if err != nil {
 			return SERVER_SYNTAX_ERROR, CLOSE_CONNECTION
@@ -368,6 +389,11 @@ func handleSingleMessage(singleMessage string, client *Client) (response ServerM
 
 		return SERVER_MOVE, MOVE
 
+	case RECHARGING:
+		if !validRechargingEnd(singleMessage) {
+			return SERVER_NOTHING, CLOSE_CONNECTION
+		}
+		return SERVER_NOTHING, client.rechargingInterruptedDuringPhase
 	case MOVE:
 		var err error
 		client.lastPos = client.pos
@@ -443,6 +469,9 @@ func handleSingleMessage(singleMessage string, client *Client) (response ServerM
 	case WIN:
 		if len(singleMessage) > 98 {
 			return SERVER_SYNTAX_ERROR, CLOSE_CONNECTION
+		}
+		if isRecharging(singleMessage) {
+			return SERVER_LOGIC_ERROR, CLOSE_CONNECTION
 		}
 		return SERVER_LOGOUT, CLOSE_CONNECTION
 	}
@@ -524,13 +553,16 @@ func handleClient(client *Client) {
 			response, client.phase = handleSingleMessage(nonTerminatedMessage, client)
 
 			if client.phase == CLOSE_CONNECTION {
-				sendMessage(client, response)
+				if response != SERVER_NOTHING {
+					sendMessage(client, response)
+				}
 				cutOff(client)
 				return
 			}
-			sendMessage(client, response)
+			if response != SERVER_NOTHING {
+				sendMessage(client, response)
+			}
 			message = ""
-
 		case MULTI_MESSAGE:
 			for {
 				terminatorIndex = strings.Index(message, TERMINATOR)
@@ -544,11 +576,15 @@ func handleClient(client *Client) {
 				response, client.phase = handleSingleMessage(singleMessage, client)
 
 				if client.phase == CLOSE_CONNECTION {
-					sendMessage(client, response)
+					if response != SERVER_NOTHING {
+						sendMessage(client, response)
+					}
 					cutOff(client)
 					return
 				}
-				sendMessage(client, response)
+				if response != SERVER_NOTHING {
+					sendMessage(client, response)
+				}
 			}
 
 		case SINGLE_AND_INCOMPLETE_MESSAGE:
