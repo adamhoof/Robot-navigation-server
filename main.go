@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -72,18 +73,16 @@ type KeyPair struct {
 }
 
 type Client struct {
-	conn          *net.Conn
-	Name          string
-	KeyID         int
-	Hash          int
-	phase         Phase
-	lastMovePhase MovePhase
-	movePhase     MovePhase
-	pos           Position
-	lastPos       Position
-	dir           Direction
-	targetDir     Direction
-	facing        Direction
+	conn      *net.Conn
+	Name      string
+	KeyID     int
+	Hash      int
+	phase     Phase
+	movePhase MovePhase
+	pos       Position
+	lastPos   Position
+	dir       Direction
+	facing    Direction
 }
 
 type Position struct {
@@ -297,42 +296,26 @@ func calibrateDirection(direction Direction, position Position) (movementDir Dir
 		} else if upperLeftQuadrant(position) {
 			return R, R
 		}
-		// upperRight => L
-		// downRight => S
-		// upperLeft => R
-		// downLeft => S
-		//upperMid =>  should never happen
-		//downMid => S
-
-		//downMidQuadrant, utopian
 	case DOWN:
 		if downRightQuadrant(position) {
 			return R, L
 		} else if downLeftQuadrant(position) {
 			return L, R
 		}
-		// upperRight => S
-		// downRight => R
-		// upperLeft => S
-		// downLeft => L
-		//upperMid =>  S
-		//downMid => should never happen
 
-		//upperLeftQuadrant or upperMidQuadrant or upperRightQuadrant, utopian
 	case R:
 		if upperRightQuadrant(position) || upperMidQuadrant(position) {
 			return R, DOWN
 		} else if downRightQuadrant(position) || downMidQuadrant(position) {
 			return L, UP
 		}
-		//upperLeftQuadrant or downLeftQuadrant, utopian
+
 	case L:
 		if upperLeftQuadrant(position) || upperMidQuadrant(position) {
 			return L, DOWN
 		} else if downLeftQuadrant(position) || downMidQuadrant(position) {
 			return R, UP
 		}
-		//upperRightQuadrant or downRightQuadrant, utopian
 	}
 	return DIR_STRAIGHT, direction
 }
@@ -470,8 +453,6 @@ const (
 	STRAIGHT  MovePhase = 2
 	RIGHT     MovePhase = 3
 	LEFT      MovePhase = 4
-
-	UNDEF MovePhase = 30
 )
 
 func handleClient(client *Client) {
@@ -484,9 +465,8 @@ func handleClient(client *Client) {
 			log.Println("Error reading buffer:", err)
 			cutOff(client)
 			return
-			//possible more exit point/non-standard situations?
 		}
-		/*err = (*client.conn).SetDeadline(time.Now().Add(1 * time.Second))*/
+		err = (*client.conn).SetDeadline(time.Now().Add(1 * time.Second))
 
 		message += string(buffer[:numChars])
 		terminatorIndex := strings.Index(message, TERMINATOR)
@@ -602,7 +582,7 @@ func main() {
 			fmt.Printf("failed to accept client: %s\n", err.Error())
 			continue
 		}
-		/*err = conn.SetDeadline(time.Now().Add(1 * time.Second))*/
+		err = conn.SetDeadline(time.Now().Add(1 * time.Second))
 		if err != nil {
 			return
 		}
