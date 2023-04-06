@@ -295,12 +295,16 @@ func calibrateDirection(direction Direction, position Position) (movementDir Dir
 			return L, L
 		} else if upperLeftQuadrant(position) {
 			return R, R
+		} else if upperMidQuadrant(position) {
+			return L, L
 		}
 	case DOWN:
 		if downRightQuadrant(position) {
 			return R, L
 		} else if downLeftQuadrant(position) {
 			return L, R
+		} else if downMidQuadrant(position) {
+			return L, L
 		}
 
 	case R:
