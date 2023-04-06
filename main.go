@@ -63,7 +63,6 @@ const (
 	R    Direction = 2
 	L    Direction = 3
 
-	TURN_AROUND  Direction = 9
 	DIR_STRAIGHT Direction = 10
 )
 
@@ -84,6 +83,7 @@ type Client struct {
 	lastPos       Position
 	dir           Direction
 	targetDir     Direction
+	facing        Direction
 }
 
 type Position struct {
@@ -288,48 +288,53 @@ func upperMidQuadrant(position Position) bool {
 func downMidQuadrant(position Position) bool {
 	return position.y < 0 && position.x == 0
 }
-func calibrateDirection(direction Direction, position Position) Direction {
+func calibrateDirection(direction Direction, position Position) (movementDir Direction, facing Direction) {
 
 	switch direction {
 	case UP:
-		if upperLeftQuadrant(position) || downLeftQuadrant(position) {
-			return R
-		} else if upperRightQuadrant(position) || downRightQuadrant(position) {
-			return L
-		} else if upperMidQuadrant(position) {
-			return TURN_AROUND
+		if upperRightQuadrant(position) {
+			return L, L
+		} else if upperLeftQuadrant(position) {
+			return R, R
 		}
+		// upperRight => L
+		// downRight => S
+		// upperLeft => R
+		// downLeft => S
+		//upperMid =>  should never happen
+		//downMid => S
+
 		//downMidQuadrant, utopian
 	case DOWN:
-		if upperLeftQuadrant(position) || downLeftQuadrant(position) {
-			return L
-		} else if upperRightQuadrant(position) || downRightQuadrant(position) {
-			return R
-		} else if downMidQuadrant(position) {
-			return TURN_AROUND
+		if downRightQuadrant(position) {
+			return R, L
+		} else if downLeftQuadrant(position) {
+			return L, R
 		}
-		//upperMidQuadrant, utopian
+		// upperRight => S
+		// downRight => R
+		// upperLeft => S
+		// downLeft => L
+		//upperMid =>  S
+		//downMid => should never happen
 
+		//upperLeftQuadrant or upperMidQuadrant or upperRightQuadrant, utopian
 	case R:
-		if upperRightQuadrant(position) || downRightQuadrant(position) {
-			return TURN_AROUND
-		} else if upperMidQuadrant(position) {
-			return R
-		} else if downMidQuadrant(position) {
-			return L
+		if upperRightQuadrant(position) || upperMidQuadrant(position) {
+			return R, DOWN
+		} else if downRightQuadrant(position) || downMidQuadrant(position) {
+			return L, UP
 		}
 		//upperLeftQuadrant or downLeftQuadrant, utopian
 	case L:
-		if upperLeftQuadrant(position) || downLeftQuadrant(position) {
-			return TURN_AROUND
-		} else if upperMidQuadrant(position) {
-			return L
-		} else if downMidQuadrant(position) {
-			return R
+		if upperLeftQuadrant(position) || upperMidQuadrant(position) {
+			return L, DOWN
+		} else if downLeftQuadrant(position) || downMidQuadrant(position) {
+			return R, UP
 		}
 		//upperRightQuadrant or downRightQuadrant, utopian
 	}
-	return DIR_STRAIGHT
+	return DIR_STRAIGHT, direction
 }
 
 func positionChanged(pos Position, lastPos Position) bool {
@@ -394,10 +399,40 @@ func handleSingleMessage(singleMessage string, client *Client) (response ServerM
 
 		case CALIBRATE:
 			if !positionChanged(client.pos, client.lastPos) {
-				client.movePhase = DODGE_OBSTACLE_1
-				return SERVER_TURN_RIGHT, MOVE
+				client.movePhase = LOCATE
+
+				switch client.facing {
+				case UP:
+					if upperRightQuadrant(client.pos) || downRightQuadrant(client.pos) {
+						return SERVER_TURN_LEFT, MOVE
+					} else if upperLeftQuadrant(client.pos) || downLeftQuadrant(client.pos) {
+						return SERVER_TURN_RIGHT, MOVE
+					}
+					//if downMidQuadrant or UNKNOWN dir, just go left
+					//upperMidQuadrant should not happen
+				case DOWN:
+					if upperRightQuadrant(client.pos) || downRightQuadrant(client.pos) {
+						return SERVER_TURN_RIGHT, MOVE
+					} else if upperLeftQuadrant(client.pos) || downLeftQuadrant(client.pos) {
+						return SERVER_TURN_LEFT, MOVE
+					}
+				case R:
+					if upperLeftQuadrant(client.pos) {
+						return SERVER_TURN_RIGHT, MOVE
+					} else if downLeftQuadrant(client.pos) {
+						return SERVER_TURN_LEFT, MOVE
+					}
+				case L:
+					if upperRightQuadrant(client.pos) || upperLeftQuadrant(client.pos) {
+						return SERVER_TURN_LEFT, MOVE
+					} else if downRightQuadrant(client.pos) || downLeftQuadrant(client.pos) {
+						return SERVER_TURN_RIGHT, MOVE
+					}
+				}
+				return SERVER_TURN_LEFT, MOVE
 			}
-			client.dir = calibrateDirection(currentDirection(client.pos, client.lastPos), client.pos)
+
+			client.dir, client.facing = calibrateDirection(currentDirection(client.pos, client.lastPos), client.pos)
 
 			switch client.dir {
 			case DIR_STRAIGHT:
@@ -409,31 +444,14 @@ func handleSingleMessage(singleMessage string, client *Client) (response ServerM
 			case L:
 				client.movePhase = LEFT
 				return SERVER_TURN_LEFT, MOVE
-			case TURN_AROUND:
-				client.movePhase = FINISH_TURN_AROUND
-				return SERVER_TURN_LEFT, MOVE
 			}
-		case DODGE_OBSTACLE_1:
-			client.movePhase = DODGE_OBSTACLE_2
-			return SERVER_MOVE, MOVE
-		case DODGE_OBSTACLE_2:
-			client.movePhase = DODGE_OBSTACLE_3
-			return SERVER_TURN_LEFT, MOVE
-		case DODGE_OBSTACLE_3:
-			client.movePhase = CALIBRATE
-			return SERVER_MOVE, MOVE
 		case RIGHT:
 			client.movePhase = CALIBRATE
 			return SERVER_MOVE, MOVE
 		case LEFT:
 			client.movePhase = CALIBRATE
 			return SERVER_MOVE, MOVE
-		case FINISH_TURN_AROUND:
-			client.movePhase = AFTER_TURN_AROUND_STRAIGHT
-			return SERVER_TURN_LEFT, MOVE
-		case AFTER_TURN_AROUND_STRAIGHT:
-			client.movePhase = CALIBRATE
-			return SERVER_MOVE, MOVE
+
 		}
 	case WIN:
 		if len(singleMessage) > 98 {
@@ -447,22 +465,11 @@ func handleSingleMessage(singleMessage string, client *Client) (response ServerM
 type MovePhase int
 
 const (
-	LOCATE                     MovePhase = 0
-	CALIBRATE                  MovePhase = 1
-	STRAIGHT                   MovePhase = 2
-	RIGHT                      MovePhase = 3
-	LEFT                       MovePhase = 4
-	TURN_180_DEG               MovePhase = 6
-	FINISH_TURN_AROUND         MovePhase = 7
-	AFTER_TURN_AROUND_STRAIGHT MovePhase = 12
-	DODGE_OBSTACLE_1           MovePhase = 13
-	DODGE_OBSTACLE_2           MovePhase = 14
-	DODGE_OBSTACLE_3           MovePhase = 15
-	DODGE_OBSTACLE_4           MovePhase = 16
-	DODGE_OBSTACLE_5           MovePhase = 17
-	DODGE_OBSTACLE_6           MovePhase = 18
-	DODGE_OBSTACLE_7           MovePhase = 19
-	DODGE_OBSTACLE_8           MovePhase = 20
+	LOCATE    MovePhase = 0
+	CALIBRATE MovePhase = 1
+	STRAIGHT  MovePhase = 2
+	RIGHT     MovePhase = 3
+	LEFT      MovePhase = 4
 
 	UNDEF MovePhase = 30
 )
@@ -485,11 +492,6 @@ func handleClient(client *Client) {
 		terminatorIndex := strings.Index(message, TERMINATOR)
 
 		messageType := deriveMessageType(message, TERMINATOR)
-
-		if message == "bypass" {
-			messageType = SINGLE_MESSAGE
-			client.phase = MOVE
-		}
 
 		switch messageType {
 		case INCOMPLETE_MESSAGE:
