@@ -395,6 +395,11 @@ func handleSingleMessage(singleMessage string, client *Client) (response ServerM
 		}
 		return SERVER_NOTHING, client.rechargingInterruptedDuringPhase
 	case MOVE:
+		if isRecharging(singleMessage) {
+			client.rechargingInterruptedDuringPhase = MOVE
+			(*client.conn).SetDeadline(time.Now().Add(5 * time.Second))
+			return SERVER_NOTHING, RECHARGING
+		}
 		var err error
 		client.lastPos = client.pos
 		client.pos, err = extractPosition(singleMessage)
@@ -518,6 +523,9 @@ func handleClient(client *Client) {
 					return
 				}
 			case VALIDATION:
+				if strings.Contains(message, "\a") {
+					continue
+				}
 				codeAsNumber, _ := strconv.Atoi(message)
 				if len(message) > 5 || codeAsNumber > 65536 {
 					sendMessage(client, SERVER_SYNTAX_ERROR)
